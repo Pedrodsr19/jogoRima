@@ -6,10 +6,14 @@ function normalizeDB(d){
   d.battles=(d.battles||[]).map(b=>({
     id:b.id,name:b.name,color:b.color||'#144fe0',color2:b.color2||'#e11d33',
     mcIds:b.mcIds||[],editions:b.editions||[],ranking:b.ranking||{},
-    currentSeason:b.currentSeason||1, seasonHistory:b.seasonHistory||[]
+    currentSeason:b.currentSeason||1, seasonHistory:b.seasonHistory||[],
+    scoring:b.scoring||undefined
   }));
   d.national=d.national||{states:{},nacional:null};
   d.national.states=d.national.states||{};
+  if(d.national.classificationMode===undefined) d.national.classificationMode='campeao';
+  if(d.national.classificationLocked===undefined) d.national.classificationLocked=false;
+  d.nationalConfig=d.nationalConfig||{};
   return d;
 }
 function loadDB(){
@@ -138,21 +142,24 @@ function roundLabel(matchCount){
 
 /* ================= ranking (pontos) ================= */
 function pointsForDepth(depth){const table=[6,4,3,2,1];return table[depth]!==undefined?table[depth]:1;}
-function computePlacements(bracket){
+function computePlacements(bracket,scoring){
   const res={};
   const totalRounds=bracket.rounds.length;
   const finalMatch=bracket.rounds[totalRounds-1][0];
-  if(finalMatch && finalMatch.done) res[finalMatch.winner]=9;
+  if(finalMatch && finalMatch.done) res[finalMatch.winner]=scoring?scoring.campeao:9;
   for(let i=totalRounds-1;i>=0;i--){
     const depth=totalRounds-1-i;
-    bracket.rounds[i].forEach(m=>{ if(m.done && m.loser!=null && res[m.loser]===undefined) res[m.loser]=pointsForDepth(depth); });
+    let pts;
+    if(scoring){ pts = depth===0?scoring.vice : depth===1?scoring.semi : depth===2?scoring.quartas : scoring.primeira; }
+    else { pts = pointsForDepth(depth); }
+    bracket.rounds[i].forEach(m=>{ if(m.done && m.loser!=null && res[m.loser]===undefined) res[m.loser]=pts; });
   }
   return res;
 }
 function applyRankingIfNeeded(battle,edition){
   if(edition.pointsApplied) return;
   if(!isBracketComplete(edition.bracket)) return;
-  const pts=computePlacements(edition.bracket);
+  const pts=computePlacements(edition.bracket,battle.scoring);
   Object.keys(pts).forEach(pid=>{
     const meta=edition.bracket.participants[pid]; const p=pts[pid];
     if(!meta) return;
@@ -412,17 +419,34 @@ function viewHome(){
   </div>
   <div class="card">
     <h3>Backup</h3>
-    <p class="muted">Exporte todos os dados do simulador para um arquivo .json, ou importe um backup existente (substitui os dados atuais).</p>
+    <p class="muted">Exporte os dados do simulador para um arquivo .json, ou importe um backup existente (substitui os dados atuais).</p>
     <div class="actionsrow">
-      <button class="btn secondary small" onclick="exportJSON()">Exportar JSON</button>
+      <button class="btn secondary small" onclick="exportJSON('full')">Exportação Completa</button>
+      <button class="btn secondary small" onclick="toggleCustomExport()">${window.__showCustomExport?'Cancelar':'Exportação Personalizada'}</button>
       <button class="btn secondary small" onclick="document.getElementById('importFileInput').click()">Importar JSON</button>
     </div>
+    ${window.__showCustomExport?`<div style="margin-top:12px;">
+      <label class="checkline"><input type="checkbox" id="expMcs" checked><span>MCs (cadastro, níveis, estados)</span></label>
+      <label class="checkline"><input type="checkbox" id="expBattles" checked><span>Batalhas Normais (edições, rankings, temporadas, títulos, cores)</span></label>
+      <label class="checkline"><input type="checkbox" id="expNational" checked><span>Estrutura Nacional (Regionais, Estaduais, Nacional, cores, classificação)</span></label>
+      <button class="btn small" style="margin-top:10px;" onclick="exportJSON('custom')">Exportar Selecionados</button>
+    </div>`:''}
     <input type="file" id="importFileInput" accept=".json,application/json" style="display:none" onchange="importJSON(this)">
   </div>
   </div>`;
 }
-function exportJSON(){
-  const blob=new Blob([JSON.stringify(db,null,2)],{type:'application/json'});
+window.__showCustomExport=false;
+function toggleCustomExport(){ window.__showCustomExport=!window.__showCustomExport; render(); }
+function exportJSON(mode){
+  let data;
+  if(mode==='full'){ data=db; }
+  else {
+    data={};
+    if(document.getElementById('expMcs').checked) data.mcs=db.mcs;
+    if(document.getElementById('expBattles').checked) data.battles=db.battles;
+    if(document.getElementById('expNational').checked){ data.national=db.national; data.nationalConfig=db.nationalConfig; }
+  }
+  const blob=new Blob([JSON.stringify(data,null,2)],{type:'application/json'});
   const url=URL.createObjectURL(blob);
   const a=document.createElement('a');
   a.href=url; a.download='rima-battle-backup.json'; a.click();
@@ -434,7 +458,7 @@ function importJSON(input){
   reader.onload=e=>{
     try{
       const data=JSON.parse(e.target.result);
-      if(!data||!Array.isArray(data.mcs)||!Array.isArray(data.battles)) throw new Error('formato inválido');
+      if(!data||typeof data!=='object') throw new Error('formato inválido');
       db=normalizeDB(data);
       save();
       closeMcModal();
@@ -529,9 +553,10 @@ function renderMcModal(){
     const s1=tierColors?tierColors[0]:battle.color, s2=tierColors?tierColors[1]:battle.color2;
     cardStyle=`background:linear-gradient(135deg,${s1},${s2});border-top-color:${s1};`;
     body=`<div class="statgrid">
-      <div class="statbox"><b>${participacoes}</b><span>Participações</span></div>
+      <div class="statbox"><b>${matches.length}</b><span>Batalhas</span></div>
       <div class="statbox"><b>${wins}</b><span>Vitórias</span></div>
       <div class="statbox"><b>${losses}</b><span>Derrotas</span></div>
+      <div class="statbox"><b>${participacoes}</b><span>Participações</span></div>
       <div class="statbox"><b>${titleCount}</b><span>Títulos</span></div>
     </div>`;
   }
@@ -543,24 +568,43 @@ function renderMcModal(){
       <div class="muted" style="margin-bottom:12px;">${esc(m.estado)} · Nível ${m.nivel}</div>
       <div class="modalTabs">${tabsHtml}</div>
       ${body}
-      <h4>Editar MC</h4>
-      <label>Nome</label><input id="editMcName" value="${esc(m.name)}">
-      <label>Nível (0-100)</label><input id="editMcNivel" type="number" min="0" max="100" value="${m.nivel}">
-      <button class="btn" onclick="saveMcEdit('${id}')">Salvar alterações</button>
+      <div class="editorBox">
+        <h4>Editor do MC</h4>
+        <label>Nome</label><input id="editMcName" value="${esc(m.name)}">
+        <div class="grid2">
+          <div><label>Estado</label><input id="editMcEstado" value="${esc(m.estado)}"></div>
+          <div><label>Nível (0-100)</label><input id="editMcNivel" type="number" min="0" max="100" value="${m.nivel}"></div>
+        </div>
+        <button class="btn" onclick="saveMcEdit('${id}')">Salvar alterações</button>
+      </div>
     </div>
   </div>`;
 }
 function saveMcEdit(id){
   const m=mcById(id); if(!m) return;
   const name=document.getElementById('editMcName').value.trim();
+  const estado=document.getElementById('editMcEstado').value.trim();
   let nivel=parseInt(document.getElementById('editMcNivel').value);
-  if(!name||isNaN(nivel)) return alert('Preencha nome e nível.');
-  m.name=name; m.nivel=Math.max(0,Math.min(100,nivel));
+  if(!name||!estado||isNaN(nivel)) return alert('Preencha nome, estado e nível.');
+  m.name=name; m.estado=estado; m.nivel=Math.max(0,Math.min(100,nivel));
   save(); renderMcModal(); render();
 }
 
 /* ================= NACIONAL HOME ================= */
+window.__editNacional=false;
+function toggleEditNacional(){ window.__editNacional=!window.__editNacional; render(); }
+function saveNacionalColors(){
+  db.nationalConfig.color=document.getElementById('editNacColor1').value;
+  db.nationalConfig.color2=document.getElementById('editNacColor2').value;
+  save(); window.__editNacional=false; render();
+}
+function setClassificationMode(mode){
+  if(db.national.classificationLocked) return;
+  db.national.classificationMode=mode;
+  save(); render();
+}
 function viewNacionalHome(){
+  if(db.nationalConfig.color) applyBattleTheme(db.nationalConfig.color,db.nationalConfig.color2);
   const estados=estadosDisponiveis();
   const rows=estados.map(e=>{
     const sd=getStateData(e);
@@ -576,8 +620,29 @@ function viewNacionalHome(){
   } else {
     nacBtn=`<div class="card"><h3>Nacional</h3><p class="muted">Estados com campeão estadual: ${champCount} (mínimo 4)</p><button class="btn gold" ${champCount<4?'disabled':''} onclick="iniciarNacional()">Iniciar Nacional</button></div>`;
   }
+  const mode=db.national.classificationMode||'campeao';
+  const locked=db.national.classificationLocked;
+  const showEditNac=!!window.__editNacional;
   return `${topbar('Estrutura Nacional','Regional → Estadual → Nacional','home')}
   <div class="content">
+    <div class="card">
+      <button class="btn secondary small" onclick="toggleEditNacional()">${showEditNac?'Cancelar':'Editar Nacional (cores)'}</button>
+      ${showEditNac?`<div style="margin-top:12px;">
+        <div class="grid2">
+          <div><label>Cor principal</label><input type="color" id="editNacColor1" value="${db.nationalConfig.color||'#2f6bff'}"></div>
+          <div><label>Cor secundária</label><input type="color" id="editNacColor2" value="${db.nationalConfig.color2||'#ff2d4d'}"></div>
+        </div>
+        <button class="btn" onclick="saveNacionalColors()">Salvar cores</button>
+      </div>`:''}
+    </div>
+    <div class="card">
+      <h3>Classificação para o Nacional</h3>
+      <p class="muted">${locked?'Configuração travada nesta temporada (já existe Estadual simulado).':'Escolha antes de simular o primeiro Estadual desta temporada.'}</p>
+      <select id="classModeSelect" onchange="setClassificationMode(this.value)" ${locked?'disabled':''}>
+        <option value="campeao" ${mode==='campeao'?'selected':''}>Somente Campeão</option>
+        <option value="campeao_vice" ${mode==='campeao_vice'?'selected':''}>Campeão + Vice</option>
+      </select>
+    </div>
     <div class="list-grid">${estados.length? rows : '<p class="muted">Cadastre MCs com estado definido para começar.</p>'}</div>
     ${nacBtn}
     <div class="card"><h3>Reiniciar</h3><p class="muted">Apaga todo o progresso de Regionais, Estaduais e do Nacional (os MCs cadastrados não são afetados).</p><button class="btn danger" onclick="resetNacional()">Reiniciar Estrutura Nacional</button></div>
@@ -585,7 +650,7 @@ function viewNacionalHome(){
 }
 function resetNacional(){
   if(!confirm('Isso vai apagar TODO o progresso da estrutura Nacional (Regionais, Estaduais e Nacional). Deseja continuar?')) return;
-  db.national={states:{},nacional:null};
+  db.national={states:{},nacional:null,classificationMode:'campeao',classificationLocked:false};
   save(); render();
 }
 
@@ -706,6 +771,7 @@ function viewEstadual(estado){
 }
 function simEstadual(estado,mode){
   const sd=getStateData(estado);
+  db.national.classificationLocked=true;
   if(mode==='one') simulateOne(sd.estadualBracket,2);
   if(mode==='phase') simulatePhase(sd.estadualBracket,2);
   if(mode==='all') simulateAll(sd.estadualBracket,2);
@@ -714,8 +780,18 @@ function simEstadual(estado,mode){
 
 /* ================= NACIONAL MAIN ================= */
 function iniciarNacional(){
+  const mode=db.national.classificationMode||'campeao';
   const estados=estadosDisponiveis().filter(e=>{ const sd=getStateData(e); return sd.estadualDone && mcExists(sd.estadualChampionMcId); });
-  const participants=estados.map(e=>{ const sd=getStateData(e); const m=mcById(sd.estadualChampionMcId); return {id:m.id,kind:'mc',name:m.name,level:m.nivel,estado:e}; });
+  let participants=[];
+  estados.forEach(e=>{
+    const sd=getStateData(e); const champ=mcById(sd.estadualChampionMcId);
+    participants.push({id:champ.id,kind:'mc',name:champ.name,level:champ.nivel,estado:e});
+    if(mode==='campeao_vice' && sd.estadualBracket){
+      const finalMatch=sd.estadualBracket.rounds[sd.estadualBracket.rounds.length-1][0];
+      const viceId=finalMatch.loser;
+      if(viceId && mcExists(viceId)){ const vice=mcById(viceId); participants.push({id:vice.id,kind:'mc',name:vice.name,level:vice.nivel,estado:e}); }
+    }
+  });
   const n=participants.length;
   const target=nextValidNacional(n);
   const excess=n-target;
@@ -740,6 +816,7 @@ function iniciarNacional(){
   save(); nav('nacional/main');
 }
 function viewNacionalMain(){
+  if(db.nationalConfig.color) applyBattleTheme(db.nationalConfig.color,db.nationalConfig.color2);
   const nac=db.national.nacional;
   if(!nac) return `${topbar('Nacional','','nacional')}<div class="content"><p class="muted">Nacional ainda não iniciado.</p></div>`;
   let body='';
@@ -835,6 +912,14 @@ function viewBattles(){
         <div><label>Cor principal</label><input type="color" id="battlecolor1" value="#144fe0"></div>
         <div><label>Cor secundária</label><input type="color" id="battlecolor2" value="#e11d33"></div>
       </div>
+      <h4>Pontuação do ranking (opcional)</h4>
+      <div class="grid2">
+        <div><label>Campeão</label><input type="number" id="scCampeao" value="9"></div>
+        <div><label>Vice</label><input type="number" id="scVice" value="6"></div>
+        <div><label>Semifinal</label><input type="number" id="scSemi" value="4"></div>
+        <div><label>Quartas</label><input type="number" id="scQuartas" value="3"></div>
+        <div><label>Primeira fase</label><input type="number" id="scPrimeira" value="1"></div>
+      </div>
       <button class="btn" onclick="createBattle()">Criar Batalha</button>
     </div>
     ${db.battles.length?rows:'<p class="muted">Nenhuma batalha criada.</p>'}
@@ -845,7 +930,14 @@ function createBattle(){
   const color=document.getElementById('battlecolor1').value;
   const color2=document.getElementById('battlecolor2').value;
   if(!name) return alert('Digite um nome.');
-  db.battles.push({id:uid(),name,color,color2,mcIds:[],editions:[],ranking:{},currentSeason:1,seasonHistory:[]});
+  const scoring={
+    campeao:parseInt(document.getElementById('scCampeao').value)||9,
+    vice:parseInt(document.getElementById('scVice').value)||6,
+    semi:parseInt(document.getElementById('scSemi').value)||4,
+    quartas:parseInt(document.getElementById('scQuartas').value)||3,
+    primeira:parseInt(document.getElementById('scPrimeira').value)||1
+  };
+  db.battles.push({id:uid(),name,color,color2,mcIds:[],editions:[],ranking:{},currentSeason:1,seasonHistory:[],scoring});
   save(); nav('battles');
 }
 
@@ -861,6 +953,18 @@ function saveBattleEdit(id){
   b.color=document.getElementById('editBattleColor1').value;
   b.color2=document.getElementById('editBattleColor2').value;
   save(); window.__editBattle[id]=false; render();
+}
+function saveBattleScoring(id){
+  const b=battleById(id);
+  b.scoring={
+    campeao:parseInt(document.getElementById('scCampeao_'+id).value)||0,
+    vice:parseInt(document.getElementById('scVice_'+id).value)||0,
+    semi:parseInt(document.getElementById('scSemi_'+id).value)||0,
+    quartas:parseInt(document.getElementById('scQuartas_'+id).value)||0,
+    primeira:parseInt(document.getElementById('scPrimeira_'+id).value)||0
+  };
+  save(); alert('Pontuação salva. Vale a partir das próximas edições/simulações.');
+  window.__editBattle[id]=false; render();
 }
 function deleteBattle(id){
   const b=battleById(id); if(!b) return;
@@ -901,6 +1005,15 @@ function viewBattleDetail(id){
           <div><label>Cor secundária</label><input type="color" id="editBattleColor2" value="${b.color2}"></div>
         </div>
         <button class="btn" onclick="saveBattleEdit('${b.id}')">Salvar Batalha</button>
+        <h4>Pontuação do ranking</h4>
+        <div class="grid2">
+          <div><label>Campeão</label><input type="number" id="scCampeao_${b.id}" value="${b.scoring?b.scoring.campeao:9}"></div>
+          <div><label>Vice</label><input type="number" id="scVice_${b.id}" value="${b.scoring?b.scoring.vice:6}"></div>
+          <div><label>Semifinal</label><input type="number" id="scSemi_${b.id}" value="${b.scoring?b.scoring.semi:4}"></div>
+          <div><label>Quartas</label><input type="number" id="scQuartas_${b.id}" value="${b.scoring?b.scoring.quartas:3}"></div>
+          <div><label>Primeira fase</label><input type="number" id="scPrimeira_${b.id}" value="${b.scoring?b.scoring.primeira:1}"></div>
+        </div>
+        <button class="btn secondary" onclick="saveBattleScoring('${b.id}')">Salvar Pontuação</button>
       </div>`:''}
     </div>
     <div class="card">
