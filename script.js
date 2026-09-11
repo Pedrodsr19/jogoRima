@@ -14,6 +14,12 @@ function normalizeDB(d){
   if(d.national.classificationMode===undefined) d.national.classificationMode='campeao';
   if(d.national.classificationLocked===undefined) d.national.classificationLocked=false;
   d.nationalConfig=d.nationalConfig||{};
+  d.liga=d.liga||{};
+  d.liga.color=d.liga.color||'#2f6bff';
+  d.liga.color2=d.liga.color2||'#ff2d4d';
+  d.liga.seasonNumber=d.liga.seasonNumber||1;
+  d.liga.seasonOffsets=d.liga.seasonOffsets||{};
+  d.liga.seasonHistory=d.liga.seasonHistory||[];
   return d;
 }
 function loadDB(){
@@ -173,6 +179,88 @@ function cleanupRanking(battle){
   Object.keys(battle.ranking).forEach(id=>{ if(!mcExists(id)) delete battle.ranking[id]; });
 }
 
+/* ================= LIGA CENTRAL ================= */
+function placementsPerMc(bracket,scoring){
+  const raw=computePlacements(bracket,scoring);
+  const out={};
+  Object.keys(raw).forEach(pid=>{
+    const meta=bracket.participants[pid]; if(!meta) return;
+    const val=raw[pid];
+    if(meta.kind==='team'){ meta.mcIds.forEach(mid=>{ if(mcExists(mid)) out[mid]=(out[mid]||0)+val; }); }
+    else { if(mcExists(pid)) out[pid]=(out[pid]||0)+val; }
+  });
+  return out;
+}
+function ligaWeeklyRanking(){
+  const totals={};
+  db.battles.forEach(b=>{
+    if(!b.editions.length) return;
+    const ed=b.editions[b.editions.length-1];
+    if(!isBracketComplete(ed.bracket)) return;
+    const pm=placementsPerMc(ed.bracket,b.scoring);
+    Object.keys(pm).forEach(mid=>{ totals[mid]=(totals[mid]||0)+pm[mid]; });
+  });
+  return totals;
+}
+function ligaSeasonRanking(){
+  const offsets=db.liga.seasonOffsets||{};
+  const totals={};
+  db.battles.forEach(b=>{
+    const start=offsets[b.id]||0;
+    for(let i=start;i<b.editions.length;i++){
+      const ed=b.editions[i];
+      if(!isBracketComplete(ed.bracket)) continue;
+      const pm=placementsPerMc(ed.bracket,b.scoring);
+      Object.keys(pm).forEach(mid=>{ totals[mid]=(totals[mid]||0)+pm[mid]; });
+    }
+  });
+  return totals;
+}
+window.__editLiga=false;
+function toggleEditLiga(){ window.__editLiga=!window.__editLiga; render(); }
+function saveLigaColors(){
+  db.liga.color=document.getElementById('editLigaColor1').value;
+  db.liga.color2=document.getElementById('editLigaColor2').value;
+  save(); window.__editLiga=false; render();
+}
+function finalizarTemporadaLiga(){
+  const ranking=Object.entries(ligaSeasonRanking()).sort((a,b)=>b[1]-a[1]);
+  if(ranking.length===0) return;
+  if(!confirm(`Finalizar a Temporada ${db.liga.seasonNumber} da Liga Central? O ranking de temporada será zerado (as batalhas individuais não são afetadas).`)) return;
+  const championMcId=ranking[0][0];
+  db.liga.seasonHistory.push({season:db.liga.seasonNumber,championMcId});
+  const offsets={}; db.battles.forEach(b=>{ offsets[b.id]=b.editions.length; });
+  db.liga.seasonOffsets=offsets;
+  db.liga.seasonNumber+=1;
+  save(); render();
+}
+function viewLiga(){
+  applyBattleTheme(db.liga.color,db.liga.color2);
+  const showEdit=!!window.__editLiga;
+  const weekly=Object.entries(ligaWeeklyRanking()).sort((a,b)=>b[1]-a[1]);
+  const season=Object.entries(ligaSeasonRanking()).sort((a,b)=>b[1]-a[1]);
+  const weeklyRows=weekly.map((r,i)=>`<div class="rankrow"><div><span class="pos">${i+1}º</span> ${mcLink(r[0])}</div><b>${r[1]} pts</b></div>`).join('');
+  const seasonRows=season.map((r,i)=>`<div class="rankrow"><div><span class="pos">${i+1}º</span> ${mcLink(r[0])}</div><b>${r[1]} pts</b></div>`).join('');
+  const history=db.liga.seasonHistory.slice().reverse().map(s=>`<div class="champrow"><span class="badge">Temporada ${s.season}</span> ${mcLink(s.championMcId)}</div>`).join('');
+  return `${topbar('Liga Central','Ranking geral de todas as batalhas','battles')}
+  <div class="content">
+    <div class="card">
+      <button class="btn secondary small" onclick="toggleEditLiga()">${showEdit?'Cancelar':'Editar Liga Central (cores)'}</button>
+      ${showEdit?`<div style="margin-top:12px;">
+        <div class="grid2">
+          <div><label>Cor principal</label><input type="color" id="editLigaColor1" value="${db.liga.color}"></div>
+          <div><label>Cor secundária</label><input type="color" id="editLigaColor2" value="${db.liga.color2}"></div>
+        </div>
+        <button class="btn" onclick="saveLigaColors()">Salvar cores</button>
+      </div>`:''}
+    </div>
+    <div class="card"><h3>Ranking Semanal</h3><p class="note">Última edição de cada batalha, automático.</p>${weeklyRows||'<p class="muted">Sem resultados ainda.</p>'}</div>
+    <div class="card"><h3>Ranking · Temporada ${db.liga.seasonNumber}</h3>${seasonRows||'<p class="muted">Sem resultados ainda nesta temporada.</p>'}
+      <button class="btn gold small" style="margin-top:12px;" onclick="finalizarTemporadaLiga()" ${season.length===0?'disabled':''}>Finalizar Temporada</button>
+    </div>
+    ${history?`<div class="card"><h3>Campeões de Temporada</h3>${history}</div>`:''}
+  </div>`;
+}
 /* ================= títulos & histórico (calculado dinamicamente) ================= */
 function editionChampionIds(ed){
   if(!isBracketComplete(ed.bracket)) return [];
@@ -241,6 +329,14 @@ function titleTierColor(c){
   if(c<10) return ['#b45309','#eab308'];
   if(c<20) return ['#7e22ce','#a855f7'];
   return null;
+}
+function titleTierDecoration(c,battleColor,battleColor2){
+  if(c<1) return '';
+  if(c<2) return 'radial-gradient(circle at 88% 12%, rgba(134,239,172,.28) 0%, transparent 42%), radial-gradient(circle at 8% 92%, rgba(74,222,128,.22) 0%, transparent 36%), radial-gradient(circle at 30% 20%, rgba(187,247,208,.14) 0%, transparent 30%)';
+  if(c<5) return 'radial-gradient(circle at 90% 10%, rgba(147,197,253,.28) 0%, transparent 42%), radial-gradient(circle at 10% 88%, rgba(96,165,250,.22) 0%, transparent 36%), radial-gradient(circle at 30% 25%, rgba(191,219,254,.14) 0%, transparent 30%)';
+  if(c<10) return 'radial-gradient(circle at 88% 10%, rgba(253,224,71,.3) 0%, transparent 45%), radial-gradient(circle at 10% 90%, rgba(250,204,21,.22) 0%, transparent 36%), radial-gradient(circle at 28% 22%, rgba(254,240,138,.15) 0%, transparent 30%)';
+  if(c<20) return 'radial-gradient(circle at 85% 12%, rgba(216,180,254,.3) 0%, transparent 45%), radial-gradient(circle at 12% 88%, rgba(192,132,252,.24) 0%, transparent 38%), radial-gradient(circle at 30% 25%, rgba(233,213,255,.15) 0%, transparent 30%)';
+  return `radial-gradient(circle at 88% 10%, ${lightenColor(battleColor,0.4)}55 0%, transparent 45%), radial-gradient(circle at 10% 90%, ${lightenColor(battleColor2,0.4)}55 0%, transparent 40%), radial-gradient(circle at 50% 50%, rgba(255,255,255,.08) 0%, transparent 55%)`;
 }
 function ultimosCampeoes(battle,n){
   n=n||6;
@@ -395,6 +491,7 @@ function render(){
   else if(r[0]==='nacional' && r[1]==='estadual') html=viewEstadual(r[2]);
   else if(r[0]==='nacional' && r[1]==='main') html=viewNacionalMain();
   else if(r[0]==='battles' && !r[1]) html=viewBattles();
+  else if(r[0]==='liga') html=viewLiga();
   else if(r[0]==='battle' && r[1] && !r[2]) html=viewBattleDetail(r[1]);
   else if(r[0]==='battle' && r[1]==='newedition') html=viewNewEdition(r[2]);
   else if(r[0]==='edition') html=viewEdition(r[1],r[2]);
@@ -551,7 +648,8 @@ function renderMcModal(){
     const participacoes=battleParticipations(battle,id);
     const tierColors=titleTierColor(titleCount);
     const s1=tierColors?tierColors[0]:battle.color, s2=tierColors?tierColors[1]:battle.color2;
-    cardStyle=`background:linear-gradient(135deg,${s1},${s2});border-top-color:${s1};`;
+    const decoration=titleTierDecoration(titleCount,battle.color,battle.color2);
+    cardStyle=`background:${decoration?decoration+',':''}linear-gradient(135deg,${s1},${s2});border-top-color:${s1};background-blend-mode:normal;`;
     body=`<div class="statgrid">
       <div class="statbox"><b>${matches.length}</b><span>Batalhas</span></div>
       <div class="statbox"><b>${wins}</b><span>Vitórias</span></div>
@@ -903,7 +1001,12 @@ function viewBattles(){
     const muted=txt==='#ffffff'?'rgba(255,255,255,.85)':'rgba(18,20,28,.7)';
     return `<div class="navcard" onclick="nav('battle/${b.id}')" style="background:linear-gradient(120deg,${b.color},${b.color2});border:none;">
       <div><h3 style="color:${txt};">${esc(b.name)}</h3><div class="muted" style="color:${muted};">${b.mcIds.length} MC(s) · ${b.editions.length} edição(ões)</div></div><div class="chev" style="color:${txt};">›</div>
-    </div>`;}).join('')}</div>`;
+    </div>`;}).join('')}
+    ${(()=>{ const txt=contrastText(db.liga.color); const muted=txt==='#ffffff'?'rgba(255,255,255,.85)':'rgba(18,20,28,.7)';
+      return `<div class="navcard" onclick="nav('liga')" style="background:linear-gradient(120deg,${db.liga.color},${db.liga.color2});border:none;">
+      <div><h3 style="color:${txt};">🏛️ Liga Central</h3><div class="muted" style="color:${muted};">Ranking geral de todas as batalhas</div></div><div class="chev" style="color:${txt};">›</div>
+    </div>`; })()}
+  </div>`;
   return `${topbar('Batalhas','Batalhas criadas pelo usuário','home')}
   <div class="content">
     <div class="card"><h3>Nova Batalha</h3>
@@ -941,6 +1044,8 @@ function createBattle(){
   save(); nav('battles');
 }
 
+window.__editionsFilter={};
+function setEditionsFilter(battleId,val){ window.__editionsFilter[battleId]=val; render(); }
 window.__showParticipants={};
 window.__editBattle={};
 function toggleParticipants(battleId){ window.__showParticipants[battleId]=!window.__showParticipants[battleId]; render(); }
@@ -979,7 +1084,9 @@ function viewBattleDetail(id){
   applyBattleTheme(b.color,b.color2);
   const mcCheck=db.mcs.map(m=>`
     <label class="checkline"><input type="checkbox" id="chk_${m.id}" ${b.mcIds.includes(m.id)?'checked':''} onchange="toggleMc('${b.id}','${m.id}')"><span>${esc(m.name)} <span class="muted">(${esc(m.estado)} · ${m.nivel})</span></span></label>`).join('');
-  const editions=`<div class="list-grid">${b.editions.map(ed=>`
+  const edFilter=window.__editionsFilter[b.id]||'all';
+  const edFiltered = edFilter==='all'?b.editions: b.editions.slice(-parseInt(edFilter));
+  const editions=`<div class="list-grid">${edFiltered.map(ed=>`
     <div class="navcard" onclick="nav('edition/${b.id}/${ed.id}')"><div><h3>${esc(ed.name)}</h3><div class="muted">${esc(ed.formatLabel)} · ${ed.status==='drawn'?(isBracketComplete(ed.bracket)?'Concluída':'Em andamento'):'Aguardando sorteio'}</div></div><div class="chev">›</div></div>`).join('')}</div>`;
   const ranking=Object.entries(b.ranking).sort((x,y)=>y[1]-x[1]);
   const rankRows=ranking.map((r,i)=>`<div class="rankrow"><div><span class="pos">${i+1}º</span> ${mcLink(r[0])}</div><b>${r[1]} pts</b></div>`).join('');
@@ -1023,7 +1130,14 @@ function viewBattleDetail(id){
       ${showParts?`<div id="mcCheckList" style="margin-top:10px;">${mcCheck||'<p class="muted">Cadastre MCs primeiro.</p>'}</div>`:''}
     </div>
     <div class="card"><h3>🏆 Últimos Campeões</h3>${campHtml}</div>
-    <div class="card"><h3>Edições</h3>${b.editions.length?editions:'<p class="muted">Nenhuma edição criada.</p>'}
+    <div class="card"><h3>Edições</h3>
+      <label>Mostrar</label>
+      <select onchange="setEditionsFilter('${b.id}',this.value)" style="max-width:220px;">
+        <option value="all" ${edFilter==='all'?'selected':''}>Todas</option>
+        <option value="10" ${edFilter==='10'?'selected':''}>Últimas 10</option>
+        <option value="5" ${edFilter==='5'?'selected':''}>Últimas 5</option>
+      </select>
+      <div style="margin-top:10px;">${b.editions.length?editions:'<p class="muted">Nenhuma edição criada.</p>'}</div>
       <button class="btn" id="createEditionBtn" ${canCreateEdition?'':'disabled'} onclick="nav('battle/newedition/${b.id}')">Criar Edição</button>
     </div>
     <div class="card"><h3>Ranking · Temporada ${b.currentSeason}</h3>${rankRows||'<p class="muted">Sem resultados ainda nesta temporada.</p>'}
