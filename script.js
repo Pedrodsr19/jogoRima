@@ -165,6 +165,7 @@ function computePlacements(bracket,scoring){
 function applyRankingIfNeeded(battle,edition){
   if(edition.pointsApplied) return;
   if(!isBracketComplete(edition.bracket)) return;
+  if(edition.excludeFromRanking){ edition.pointsApplied=true; save(); return; }
   const pts=computePlacements(edition.bracket,battle.scoring);
   Object.keys(pts).forEach(pid=>{
     const meta=edition.bracket.participants[pid]; const p=pts[pid];
@@ -196,7 +197,7 @@ function ligaWeeklyRanking(){
   db.battles.forEach(b=>{
     if(!b.editions.length) return;
     const ed=b.editions[b.editions.length-1];
-    if(!isBracketComplete(ed.bracket)) return;
+    if(!isBracketComplete(ed.bracket) || ed.excludeFromRanking) return;
     const pm=placementsPerMc(ed.bracket,b.scoring);
     Object.keys(pm).forEach(mid=>{ totals[mid]=(totals[mid]||0)+pm[mid]; });
   });
@@ -209,7 +210,7 @@ function ligaSeasonRanking(){
     const start=offsets[b.id]||0;
     for(let i=start;i<b.editions.length;i++){
       const ed=b.editions[i];
-      if(!isBracketComplete(ed.bracket)) continue;
+      if(!isBracketComplete(ed.bracket) || ed.excludeFromRanking) continue;
       const pm=placementsPerMc(ed.bracket,b.scoring);
       Object.keys(pm).forEach(mid=>{ totals[mid]=(totals[mid]||0)+pm[mid]; });
     }
@@ -620,7 +621,7 @@ function renderMcModal(){
   const id=window.__modalMcId; const m=mcById(id); const root=document.getElementById('modalRoot');
   if(!m){ root.innerHTML=''; return; }
   const tab=window.__modalTab;
-  const mcBattles=db.battles.filter(bt=>bt.mcIds.includes(id));
+  const mcBattles=db.battles.filter(bt=>bt.mcIds.includes(id) || (titleCountsForBattle(bt)[id]||0)>0);
   const GRAY='#33394a';
   let body='', cardStyle=`background:${GRAY};border-top-color:var(--accent);`;
   if(tab==='geral'){
@@ -748,7 +749,11 @@ function viewNacionalHome(){
 }
 function resetNacional(){
   if(!confirm('Isso vai apagar TODO o progresso da estrutura Nacional (Regionais, Estaduais e Nacional). Deseja continuar?')) return;
-  db.national={states:{},nacional:null,classificationMode:'campeao',classificationLocked:false};
+  const newStates={};
+  Object.entries(db.national.states||{}).forEach(([estado,sd])=>{
+    if(sd.color) newStates[estado]={built:false,color:sd.color,color2:sd.color2};
+  });
+  db.national={states:newStates,nacional:null,classificationMode:'campeao',classificationLocked:false};
   save(); render();
 }
 
@@ -1007,9 +1012,12 @@ function viewBattles(){
       <div><h3 style="color:${txt};">🏛️ Liga Central</h3><div class="muted" style="color:${muted};">Ranking geral de todas as batalhas</div></div><div class="chev" style="color:${txt};">›</div>
     </div>`; })()}
   </div>`;
+  const showNew=!!window.__showNewBattleForm;
   return `${topbar('Batalhas','Batalhas criadas pelo usuário','home')}
   <div class="content">
-    <div class="card"><h3>Nova Batalha</h3>
+    <div class="card">
+      <button class="btn secondary small" onclick="toggleNewBattleForm()">${showNew?'Cancelar':'Criar Batalha'}</button>
+      ${showNew?`<div style="margin-top:12px;">
       <label>Nome</label><input id="battlename" placeholder="Nome da batalha">
       <div class="grid2">
         <div><label>Cor principal</label><input type="color" id="battlecolor1" value="#144fe0"></div>
@@ -1024,10 +1032,13 @@ function viewBattles(){
         <div><label>Primeira fase</label><input type="number" id="scPrimeira" value="1"></div>
       </div>
       <button class="btn" onclick="createBattle()">Criar Batalha</button>
+      </div>`:''}
     </div>
     ${db.battles.length?rows:'<p class="muted">Nenhuma batalha criada.</p>'}
   </div>`;
 }
+window.__showNewBattleForm=false;
+function toggleNewBattleForm(){ window.__showNewBattleForm=!window.__showNewBattleForm; render(); }
 function createBattle(){
   const name=document.getElementById('battlename').value.trim();
   const color=document.getElementById('battlecolor1').value;
@@ -1183,6 +1194,7 @@ function viewNewEdition(battleId){
         <option value="quarteto">Quartetos</option>
       </select>
       <div id="teamcountwrap"></div>
+      <label class="checkline" style="margin-top:12px;"><input type="checkbox" id="edNoRanking"><span>Não contar para o ranking desta batalha</span></label>
       <button class="btn" onclick="createEdition('${b.id}')">Criar e Sortear</button>
     </div>
   </div>`;
@@ -1242,7 +1254,7 @@ function createEdition(battleId){
     });
   }
   const bracket=buildBracket(shuffle(participants));
-  const edition={id:uid(),name,format:fmt,formatLabel,size,teamSize,targetWins,bracket,status:'drawn',pointsApplied:false};
+  const edition={id:uid(),name,format:fmt,formatLabel,size,teamSize,targetWins,bracket,status:'drawn',pointsApplied:false,excludeFromRanking:!!document.getElementById('edNoRanking').checked};
   b.editions.push(edition);
   save(); nav('edition/'+b.id+'/'+edition.id);
 }
