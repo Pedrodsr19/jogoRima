@@ -21,6 +21,8 @@ function normalizeDB(d){
   d.liga.seasonOffsets=d.liga.seasonOffsets||{};
   d.liga.seasonHistory=d.liga.seasonHistory||[];
   d.nationalTitles=d.nationalTitles||[];
+  d.fms=d.fms||{history:[],current:null};
+  d.fmsTitles=d.fmsTitles||[];
   backfillNationalTitles(d);
   return d;
 }
@@ -284,6 +286,98 @@ function viewLiga(){
     ${history?`<div class="card"><h3>Campeões de Temporada</h3>${history}</div>`:''}
   </div>`;
 }
+
+/* ================= FMS VIEWS ================= */
+function fmsNameFor(id){ return mcLink(id); }
+function viewFms(){
+  const cur=db.fms.current;
+  let body='';
+  if(!cur){
+    body=`<div class="card"><p>Serão selecionados automaticamente os 45 MCs de maior nível (desempate: títulos, depois vitórias).</p>
+    <button class="btn" onclick="iniciarFMS()">Iniciar FMS</button></div>`;
+    if(db.fms.history.length){
+      body+=`<div class="card"><h3>Edições anteriores</h3>${db.fms.history.slice().reverse().map(ed=>`<div class="champrow"><span class="badge">Edição ${ed.edicao}</span> ${ed.championMcId?fmsNameFor(ed.championMcId):'—'}</div>`).join('')}</div>`;
+    }
+    return `${topbar('FMS Brasil','Freestyle Master Series','home')}<div class="content">${body}</div>`;
+  }
+  body+=`<div class="card"><p>Edição <b>${cur.edicao}</b> · MCs elegíveis (top 45): <b>${cur.mcsElegiveis.length}</b> · Restantes: <b>${cur.remainingIds.length}</b></p></div>`;
+  if(cur.phase==='seletivas'){
+    body+=`<div class="list-grid">${cur.seletivas.map(s=>{
+      const status=s.done?'Concluída · Campeão: '+esc(mcName(s.championMcId)):(s.bracket?'Em andamento':(cur.classificados.length===s.idx-1?'Pronta para sortear':'Aguardando'));
+      return `<div class="navcard" onclick="nav('fms/seletiva/${s.idx}')"><div><h3>${s.idx}. ${esc(s.estado)}</h3><div class="muted">${status}</div></div><div class="chev">›</div></div>`;
+    }).join('')}</div>`;
+    if(cur.classificados.length===12){
+      body+=`<div class="card"><h3>As 12 seletivas foram concluídas!</h3><button class="btn gold" onclick="iniciarFasePrincipal()">Iniciar Fase de Grupos</button></div>`;
+    }
+  } else {
+    body+=`<div class="navcard" onclick="nav('fms/principal')"><div><h3>FMS Principal</h3><div class="muted">${cur.phase==='done'?'Concluída · Campeão: '+esc(mcName(cur.championMcId)):'Em andamento ('+cur.phase+')'}</div></div><div class="chev">›</div></div>`;
+  }
+  if(cur.phase==='done'){
+    body+=`<div class="card" style="text-align:center;"><h2>🏆 Campeão da FMS</h2><h1>${mcLink(cur.championMcId)}</h1>
+    <button class="btn" style="margin-top:14px;" onclick="novaFMS()">Iniciar Nova FMS</button></div>`;
+  }
+  if(db.fms.history.length){
+    body+=`<div class="card"><h3>Edições anteriores</h3>${db.fms.history.slice().reverse().map(ed=>`<div class="champrow"><span class="badge">Edição ${ed.edicao}</span> ${ed.championMcId?fmsNameFor(ed.championMcId):'—'}</div>`).join('')}</div>`;
+  }
+  return `${topbar('FMS Brasil','Freestyle Master Series · Edição '+cur.edicao,'home')}<div class="content">${body}</div>`;
+}
+function viewFmsSeletiva(idx){
+  const cur=db.fms.current;
+  const sel=cur.seletivas.find(s=>s.idx===idx);
+  let body='';
+  if(!sel.bracket){
+    const isNext=cur.classificados.length===idx-1;
+    body=`<div class="card"><p>${isNext?'32 MCs serão sorteados entre os '+cur.remainingIds.length+' ainda elegíveis.':'Aguarde a conclusão da seletiva anterior.'}</p>
+    <button class="btn" ${isNext?'':'disabled'} onclick="sortearSeletiva(${idx})">Sortear Seletiva</button></div>`;
+  } else {
+    body=`<div class="card">${renderBracketBlock(sel.bracket,2,'simSeletiva',[idx])}</div>`;
+  }
+  return `${topbar('Seletiva '+idx,sel.estado,'fms')}<div class="content">${body}</div>`;
+}
+function fmsMatchRow(m){
+  const done=m.done;
+  const side=(id,other,score,otherScore)=>`<div class="side ${done&&m.winner===id?'win':''}"><span class="nm">${mcLink(id)}</span><span>${done?score:''}</span></div>`;
+  return `<div class="match ${done?'done':''}">${side(m.a,m.b,m.scoreA,m.scoreB)}${side(m.b,m.a,m.scoreB,m.scoreA)}</div>`;
+}
+function fmsGroupBlock(groupKey,group){
+  const standings=fmsStandings(group);
+  const standingsHtml=standings.map((s,i)=>`<div class="rankrow"><div><span class="pos">${i+1}º</span> ${mcLink(s.id)}</div><b>${s.pts} pts</b></div>`).join('');
+  const ri=fmsGroupActiveRound(group);
+  const roundsHtml=group.rounds.map((round,i)=>`<div class="round"><h4>RODADA ${i+1}</h4>${round.map(m=>fmsMatchRow(m)).join('')}</div>`).join('');
+  const complete=ri===-1;
+  return `<div class="card"><h3>Grupo ${groupKey}</h3>
+    <div style="margin-bottom:10px;">${standingsHtml}</div>
+    <div class="brackets-scroll">${roundsHtml}</div>
+    ${complete?'<div class="badge">Grupo concluído</div>':`<div class="actionsrow">
+      <button class="btn small" onclick="simFmsGroup('${groupKey}','one')">Simular Batalha</button>
+      <button class="btn small secondary" onclick="simFmsGroup('${groupKey}','round')">Simular Rodada</button>
+      <button class="btn small gold" onclick="simFmsGroup('${groupKey}','all')">Simular Tudo</button>
+    </div>`}
+  </div>`;
+}
+function viewFmsPrincipal(){
+  const cur=db.fms.current;
+  let body='';
+  body+=fmsGroupBlock('A',cur.grupos.A);
+  body+=fmsGroupBlock('B',cur.grupos.B);
+  if(cur.semifinais){
+    body+=`<div class="card"><h3>Semifinais</h3>
+      <h4>Semifinal 1</h4>${fmsMatchRow(cur.semifinais.sf1)}
+      ${!cur.semifinais.sf1.done?`<button class="btn small" onclick="simFmsSemi('sf1')">Simular</button>`:''}
+      <h4>Semifinal 2</h4>${fmsMatchRow(cur.semifinais.sf2)}
+      ${!cur.semifinais.sf2.done?`<button class="btn small" onclick="simFmsSemi('sf2')">Simular</button>`:''}
+    </div>`;
+  }
+  if(cur.final){
+    body+=`<div class="card"><h3>Final</h3>${fmsMatchRow(cur.final)}
+      ${!cur.final.done?`<button class="btn small gold" onclick="simFmsFinal()">Simular Final</button>`:''}
+    </div>`;
+  }
+  if(cur.phase==='done'){
+    body+=`<div class="card" style="text-align:center;"><h2>🏆 Campeão da FMS</h2><h1>${mcLink(cur.championMcId)}</h1></div>`;
+  }
+  return `${topbar('FMS Principal','Fase de grupos, semis e final','fms')}<div class="content">${body}</div>`;
+}
 /* ================= títulos & histórico (calculado dinamicamente) ================= */
 function editionChampionIds(ed){
   if(!isBracketComplete(ed.bracket)) return [];
@@ -423,6 +517,7 @@ function collectTitles(mcId){
     (b.seasonHistory||[]).forEach(s=>{ if(s.championMcId===mcId) titles.push({type:'Temporada',label:`Temporada ${s.season} de Ranking - ${b.name}`}); });
   });
   (db.nationalTitles||[]).forEach(t=>{ if(t.mcId===mcId) titles.push({type:t.type,label:t.label}); });
+  (db.fmsTitles||[]).forEach(t=>{ if(t.mcId===mcId) titles.push({type:'FMS',label:t.label}); });
   return titles;
 }
 
@@ -435,6 +530,189 @@ function classifiedFromRegional(bracket,count){
   const semiRound=bracket.rounds[bracket.rounds.length-2]; const out=[]; semiRound.forEach(m=>{ out.push(m.a); out.push(m.b); }); return out;
 }
 function mcParticipant(id){ const m=mcById(id); return {id:m.id,kind:'mc',name:m.name,level:m.nivel,estado:m.estado}; }
+
+/* ================= FMS ================= */
+const FMS_ESTADOS=['São Paulo','Rio de Janeiro','Espírito Santo','Minas Gerais','Paraná','Rio Grande do Sul','Bahia','Ceará','Mato Grosso','Pernambuco','Amazonas','Pará'];
+function allFmsEditions(){ return (db.fms.history||[]).concat(db.fms.current?[db.fms.current]:[]); }
+function fmsSelectTop45(){
+  const scored=db.mcs.map(m=>({id:m.id,nivel:m.nivel,titulos:collectTitles(m.id).length,vitorias:collectMatchesForMc(m.id).filter(x=>x.won).length}));
+  scored.sort((a,b)=> b.nivel-a.nivel || b.titulos-a.titulos || b.vitorias-a.vitorias);
+  return scored.slice(0,45).map(s=>s.id);
+}
+function iniciarFMS(){
+  const elegiveis=fmsSelectTop45();
+  if(elegiveis.length<32) return alert('São necessários pelo menos 32 MCs cadastrados para iniciar a FMS.');
+  db.fms.current={
+    edicao:(db.fms.history?db.fms.history.length:0)+1,
+    mcsElegiveis:elegiveis,
+    remainingIds:elegiveis.slice(),
+    seletivas:FMS_ESTADOS.map((estado,i)=>({estado,idx:i+1,bracket:null,championMcId:null,done:false})),
+    classificados:[],
+    grupos:null,
+    semifinais:null,
+    final:null,
+    championMcId:null,
+    phase:'seletivas'
+  };
+  save(); nav('fms');
+}
+function sortearSeletiva(idx){
+  const cur=db.fms.current;
+  const sel=cur.seletivas.find(s=>s.idx===idx);
+  if(!sel || sel.bracket) return;
+  if(cur.classificados.length!==idx-1) return;
+  const need=32;
+  const pool=shuffle(cur.remainingIds).slice(0,need);
+  sel.bracket=buildBracket(shuffle(pool).map(mcParticipant));
+  save(); render();
+}
+function simSeletiva(idx,mode){
+  const cur=db.fms.current;
+  const sel=cur.seletivas.find(s=>s.idx===idx);
+  if(!sel || !sel.bracket) return;
+  if(mode==='one') simulateOne(sel.bracket,2);
+  if(mode==='phase') simulatePhase(sel.bracket,2);
+  if(mode==='all') simulateAll(sel.bracket,2);
+  if(isBracketComplete(sel.bracket) && !sel.done){
+    sel.done=true;
+    sel.championMcId=bracketChampion(sel.bracket);
+    cur.remainingIds=cur.remainingIds.filter(id=>id!==sel.championMcId);
+    cur.classificados.push(sel.championMcId);
+  }
+  save(); render();
+}
+function roundRobinRounds(players){
+  const n=players.length; const rounds=[];
+  let arr=players.slice();
+  const fixed=arr[0]; let rest=arr.slice(1);
+  for(let r=0;r<n-1;r++){
+    const full=[fixed,...rest]; const round=[];
+    for(let i=0;i<n/2;i++){ round.push({a:full[i],b:full[n-1-i],scoreA:null,scoreB:null,winner:null,done:false}); }
+    rounds.push(round);
+    rest.unshift(rest.pop());
+  }
+  return rounds;
+}
+function iniciarFasePrincipal(){
+  const cur=db.fms.current;
+  if(cur.classificados.length!==12) return;
+  const shuffled=shuffle(cur.classificados);
+  const A=shuffled.slice(0,6), B=shuffled.slice(6,12);
+  cur.grupos={
+    A:{players:A,rounds:roundRobinRounds(A)},
+    B:{players:B,rounds:roundRobinRounds(B)}
+  };
+  cur.phase='grupos';
+  save(); nav('fms/principal');
+}
+function fmsMatchPoints(m){
+  if(!m.done) return 0;
+  const diff=Math.abs(m.scoreA-m.scoreB);
+  return diff===2?3:2;
+}
+function fmsStandings(group){
+  const pts={}; group.players.forEach(id=>pts[id]=0);
+  group.rounds.forEach(round=>round.forEach(m=>{
+    if(!m.done) return;
+    const winner=m.winner, p=fmsMatchPoints(m);
+    pts[winner]=(pts[winner]||0)+p;
+  }));
+  const order=db.fms.current.classificados;
+  return group.players.slice().sort((x,y)=> (pts[y]-pts[x]) || (order.indexOf(x)-order.indexOf(y)) ).map(id=>({id,pts:pts[id]}));
+}
+function fmsGroupActiveRound(group){
+  for(let i=0;i<group.rounds.length;i++){ if(group.rounds[i].some(m=>!m.done)) return i; }
+  return -1;
+}
+function simFmsGroupMatch(m){
+  const pa=mcById(m.a), pb=mcById(m.b);
+  const p=calcProb(pa.nivel,pb.nivel);
+  const [sa,sb]=simulateBestOf(2,p);
+  m.scoreA=sa; m.scoreB=sb; m.winner=sa>sb?m.a:m.b; m.done=true;
+}
+function simFmsGroup(groupKey,mode){
+  const cur=db.fms.current; const group=cur.grupos[groupKey];
+  if(mode==='one'){ for(const round of group.rounds){ const m=round.find(x=>!x.done); if(m){ simFmsGroupMatch(m); break; } } }
+  if(mode==='round'){ const ri=fmsGroupActiveRound(group); if(ri>=0) group.rounds[ri].forEach(m=>{ if(!m.done) simFmsGroupMatch(m); }); }
+  if(mode==='all'){ group.rounds.forEach(round=>round.forEach(m=>{ if(!m.done) simFmsGroupMatch(m); })); }
+  checkFmsGroupsComplete();
+  save(); render();
+}
+function checkFmsGroupsComplete(){
+  const cur=db.fms.current;
+  if(!cur.grupos || cur.semifinais) return;
+  const aDone=cur.grupos.A.rounds.every(r=>r.every(m=>m.done));
+  const bDone=cur.grupos.B.rounds.every(r=>r.every(m=>m.done));
+  if(aDone && bDone){
+    const stA=fmsStandings(cur.grupos.A), stB=fmsStandings(cur.grupos.B);
+    cur.semifinais={
+      sf1:{a:stA[0].id,b:stB[1].id,scoreA:null,scoreB:null,winner:null,done:false},
+      sf2:{a:stB[0].id,b:stA[1].id,scoreA:null,scoreB:null,winner:null,done:false}
+    };
+    cur.phase='semifinal';
+  }
+}
+function simFmsSemi(key){
+  const cur=db.fms.current; const m=cur.semifinais[key]; if(!m||m.done) return;
+  simFmsGroupMatch(m);
+  if(cur.semifinais.sf1.done && cur.semifinais.sf2.done && !cur.final){
+    cur.final={a:cur.semifinais.sf1.winner,b:cur.semifinais.sf2.winner,scoreA:null,scoreB:null,winner:null,done:false};
+    cur.phase='final';
+  }
+  save(); render();
+}
+function simFmsFinal(){
+  const cur=db.fms.current; const m=cur.final; if(!m||m.done) return;
+  simFmsGroupMatch(m);
+  cur.championMcId=m.winner;
+  cur.phase='done';
+  db.fmsTitles.push({mcId:m.winner,edicao:cur.edicao,label:`Campeão FMS - Edição ${cur.edicao}`});
+  save(); render();
+}
+function novaFMS(){
+  if(!confirm('Iniciar uma nova FMS? Os resultados anteriores continuam no histórico dos MCs.')) return;
+  db.fms.history.push(db.fms.current);
+  db.fms.current=null;
+  save(); iniciarFMS();
+}
+function bracketInvolvesFms(bracket,mcId){ return bracketInvolves(bracket,mcId); }
+function fmsMcHasHistory(mcId){
+  return allFmsEditions().some(ed=> ed.mcsElegiveis && ed.mcsElegiveis.includes(mcId));
+}
+function fmsStatsForMc(mcId){
+  let selPart=0, selWin=0, selLoss=0, mainPart=0, mainWin=0, mainLoss=0;
+  allFmsEditions().forEach(ed=>{
+    ed.seletivas.forEach(sel=>{
+      if(sel.bracket && bracketInvolvesFms(sel.bracket,mcId)){
+        selPart++;
+        sel.bracket.rounds.forEach(round=>round.forEach(m=>{
+          if(!m.done) return;
+          const ina=m.a===mcId, inb=m.b===mcId;
+          if(ina||inb){ if((ina&&m.winner===m.a)||(inb&&m.winner===m.b)) selWin++; else selLoss++; }
+        }));
+      }
+    });
+    if(ed.grupos){
+      ['A','B'].forEach(gk=>{
+        const group=ed.grupos[gk]; if(!group||!group.players.includes(mcId)) return;
+        let counted=false;
+        group.rounds.forEach(round=>round.forEach(m=>{
+          if(m.a===mcId||m.b===mcId){
+            if(!counted){ mainPart++; counted=true; }
+            if(m.done){ const won=(m.a===mcId&&m.winner===m.a)||(m.b===mcId&&m.winner===m.b); if(won) mainWin++; else mainLoss++; }
+          }
+        }));
+      });
+    }
+    ['sf1','sf2'].forEach(k=>{ const m=ed.semifinais&&ed.semifinais[k]; if(m&&(m.a===mcId||m.b===mcId)&&m.done){ const won=(m.a===mcId&&m.winner===m.a)||(m.b===mcId&&m.winner===m.b); if(won) mainWin++; else mainLoss++; } });
+    if(ed.final && (ed.final.a===mcId||ed.final.b===mcId) && ed.final.done){ const won=(ed.final.a===mcId&&ed.final.winner===ed.final.a)||(ed.final.b===mcId&&ed.final.winner===ed.final.b); if(won) mainWin++; else mainLoss++; }
+  });
+  const totalMatches=selWin+selLoss+mainWin+mainLoss;
+  const totalWins=selWin+mainWin;
+  const winrate=totalMatches?Math.round(totalWins/totalMatches*100):0;
+  const titleCount=(db.fmsTitles||[]).filter(t=>t.mcId===mcId).length;
+  return {selPart,selWin,selLoss,mainPart,mainWin,mainLoss,titleCount,winrate};
+}
 
 /* ================= routing ================= */
 window.addEventListener('hashchange',render);
@@ -511,6 +789,9 @@ function render(){
   else if(r[0]==='nacional' && r[1]==='main') html=viewNacionalMain();
   else if(r[0]==='battles' && !r[1]) html=viewBattles();
   else if(r[0]==='liga') html=viewLiga();
+  else if(r[0]==='fms' && !r[1]) html=viewFms();
+  else if(r[0]==='fms' && r[1]==='seletiva') html=viewFmsSeletiva(parseInt(r[2]));
+  else if(r[0]==='fms' && r[1]==='principal') html=viewFmsPrincipal();
   else if(r[0]==='battle' && r[1] && !r[2]) html=viewBattleDetail(r[1]);
   else if(r[0]==='battle' && r[1]==='newedition') html=viewNewEdition(r[2]);
   else if(r[0]==='edition') html=viewEdition(r[1],r[2]);
@@ -532,6 +813,7 @@ function viewHome(){
     <div class="navcard hero1" onclick="nav('mcs')"><div><h3>🎤 Cadastro de MCs</h3><div class="muted">${db.mcs.length} MC(s) cadastrados</div></div><div class="chev">›</div></div>
     <div class="navcard hero2" onclick="nav('nacional')"><div><h3>🏆 Estrutura Nacional</h3><div class="muted">Regional → Estadual → Nacional</div></div><div class="chev">›</div></div>
     <div class="navcard hero3" onclick="nav('battles')"><div><h3>🔥 Batalhas</h3><div class="muted">${db.battles.length} batalha(s) criadas</div></div><div class="chev">›</div></div>
+    <div class="navcard" onclick="nav('fms')"><div><h3>🎙️ FMS Brasil</h3><div class="muted">${db.fms.current?'Edição '+db.fms.current.edicao+' em andamento':'Nenhuma edição em andamento'}</div></div><div class="chev">›</div></div>
   </div>
   <div class="card">
     <h3>Backup</h3>
@@ -658,6 +940,10 @@ function renderMcModal(){
     </div>
     <h4>Títulos gerais (${titles.length})</h4>
     <div class="titlelist">${titles.length?titles.map(t=>`<div class="titlerow"><span class="badge">${t.type}</span> ${esc(t.label)}</div>`).join(''):'<p class="muted">Nenhum título ainda.</p>'}</div>`;
+    const tierColorsG=titleTierColor(titles.length);
+    const gs1=tierColorsG?tierColorsG[0]:'#2f6bff', gs2=tierColorsG?tierColorsG[1]:'#ff2d4d';
+    const decorG=titleTierDecoration(titles.length,'#2f6bff','#ff2d4d');
+    cardStyle=`background:${decorG?decorG+',':''}linear-gradient(135deg,${gs1},${gs2});border-top-color:${gs1};`;
   } else if(tab==='nacional'){
     const natMatches=collectNationalMatchesForMc(id);
     const natWins=natMatches.filter(x=>x.won).length;
@@ -672,6 +958,22 @@ function renderMcModal(){
       <div class="statbox"><b>${titNacional}</b><span>Títulos de Nacional</span></div>
     </div>
     <div class="titlelist">${natTitles.length?natTitles.map(t=>`<div class="titlerow"><span class="badge">${t.type}</span> ${esc(t.label)}</div>`).join(''):'<p class="muted">Nenhum título no Nacional ainda.</p>'}</div>`;
+  } else if(tab==='fms'){
+    const fs=fmsStatsForMc(id);
+    body=`<div class="statgrid">
+      <div class="statbox"><b>${fs.selPart}</b><span>Participações Seletivas</span></div>
+      <div class="statbox"><b>${fs.selWin}</b><span>Vitórias Seletivas</span></div>
+      <div class="statbox"><b>${fs.selLoss}</b><span>Derrotas Seletivas</span></div>
+      <div class="statbox"><b>${fs.mainPart}</b><span>Participações FMS</span></div>
+      <div class="statbox"><b>${fs.mainWin}</b><span>Vitórias FMS</span></div>
+      <div class="statbox"><b>${fs.mainLoss}</b><span>Derrotas FMS</span></div>
+      <div class="statbox"><b>${fs.titleCount}</b><span>Título FMS</span></div>
+      <div class="statbox"><b>${fs.winrate}%</b><span>Aproveitamento</span></div>
+    </div>`;
+    const tierColorsF=titleTierColor(fs.titleCount);
+    const fs1=tierColorsF?tierColorsF[0]:'#2f6bff', fs2=tierColorsF?tierColorsF[1]:'#ff2d4d';
+    const decorF=titleTierDecoration(fs.titleCount,'#2f6bff','#ff2d4d');
+    cardStyle=`background:${decorF?decorF+',':''}linear-gradient(135deg,${fs1},${fs2});border-top-color:${fs1};`;
   } else {
     const battle=battleById(tab);
     if(!battle){ window.__modalTab='geral'; return renderMcModal(); }
@@ -693,6 +995,7 @@ function renderMcModal(){
   }
   const tabsHtml=`<div class="mtab ${tab==='geral'?'active':''}" onclick="switchModalTab('geral')">Geral</div>`+
     `<div class="mtab ${tab==='nacional'?'active':''}" onclick="switchModalTab('nacional')">Nacional</div>`+
+    (fmsMcHasHistory(id)?`<div class="mtab ${tab==='fms'?'active':''}" onclick="switchModalTab('fms')">FMS</div>`:'')+
     mcBattles.map(bt=>`<div class="mtab ${tab===bt.id?'active':''}" onclick="switchModalTab('${bt.id}')">${esc(bt.name)}</div>`).join('');
   root.innerHTML=`<div class="modalOverlay" onclick="if(event.target===this)closeMcModal()">
     <div class="modalCard" style="${cardStyle}">
@@ -970,7 +1273,7 @@ function viewNacionalMain(){
   if(nac.prefaseBracket){
     body+=`<div class="card"><h3>Pré-fase</h3>${renderFlatBlock(nac.prefaseBracket,'simNacional')}</div>`;
   }
-  if(nac.phase==='main' && nac.mainBracket){
+  if(nac.mainBracket){
     body+=`<div class="card"><h3>Bracket Nacional</h3>${renderBracketBlock(nac.mainBracket,2,'simNacionalMain',[])}</div>`;
     if(isBracketComplete(nac.mainBracket) && !nac.championMcId){
       nac.championMcId=bracketChampion(nac.mainBracket); nac.phase='done';
@@ -1225,15 +1528,13 @@ function finalizarTemporada(battleId){
 function viewNewEdition(battleId){
   const b=battleById(battleId); if(!b) return viewBattles();
   applyBattleTheme(b.color,b.color2);
-  const n=b.mcIds.length;
-  const soloOpts=[8,16].filter(s=>n>=s).map(s=>`<option value="solo${s}">Solo - ${s} MCs</option>`).join('');
   return `${topbar('Nova Edição',b.name,'battle/'+b.id)}
   <div class="content">
     <div class="card">
       <label>Nome da edição</label><input id="edname" placeholder="Ex: Edição 01" value="Edição ${b.editions.length+1}">
-      <label>Formato</label>
+      <label>Modalidade</label>
       <select id="edformat" onchange="updateTeamOptions('${b.id}')">
-        ${soloOpts}
+        <option value="solo">Solo</option>
         <option value="dupla">Duplas</option>
         <option value="trio">Trios</option>
         <option value="quarteto">Quartetos</option>
@@ -1249,13 +1550,16 @@ function updateTeamOptions(battleId){
   const fmtEl=document.getElementById('edformat'); if(!fmtEl) return;
   const fmt=fmtEl.value;
   const wrap=document.getElementById('teamcountwrap');
+  if(fmt==='solo'){
+    const opts=[8,16,32].filter(s=>b.mcIds.length>=s);
+    wrap.innerHTML=`<label>Quantidade de MCs</label><select id="teamcount">${opts.map(o=>`<option value="${o}">${o} MCs</option>`).join('')||'<option disabled>MCs insuficientes</option>'}</select>`;
+    return;
+  }
   const teamSizeMap={dupla:2,trio:3,quarteto:4};
-  if(teamSizeMap[fmt]){
-    const ts=teamSizeMap[fmt];
-    const maxTeams=Math.floor(b.mcIds.length/ts);
-    const opts=[4,8,16,32].filter(v=>v<=maxTeams);
-    wrap.innerHTML=`<label>Quantidade de equipes</label><select id="teamcount">${opts.map(o=>`<option value="${o}">${o} equipes (${o*ts} MCs)</option>`).join('')||'<option disabled>MCs insuficientes</option>'}</select>`;
-  } else { wrap.innerHTML=''; }
+  const ts=teamSizeMap[fmt];
+  const maxTeams=Math.floor(b.mcIds.length/ts);
+  const opts=[4,8,16,32].filter(v=>v<=maxTeams);
+  wrap.innerHTML=`<label>Quantidade de equipes</label><select id="teamcount">${opts.map(o=>`<option value="${o}">${o} equipes (${o*ts} MCs)</option>`).join('')||'<option disabled>MCs insuficientes</option>'}</select>`;
 }
 function weightedDraft(battle,needed){
   const ids=battle.mcIds.slice();
@@ -1274,11 +1578,11 @@ function createEdition(battleId){
   const b=battleById(battleId);
   const name=document.getElementById('edname').value.trim()||'Edição';
   const fmt=document.getElementById('edformat').value;
+  const tc=document.getElementById('teamcount');
+  if(!tc||!tc.value) return alert('MCs insuficientes para este formato.');
   let size,teamSize,targetWins,formatLabel;
-  if(fmt==='solo8'||fmt==='solo16'){ size=fmt==='solo8'?8:16; teamSize=1; targetWins=2; formatLabel='Solo - '+size+' MCs'; }
+  if(fmt==='solo'){ size=parseInt(tc.value); teamSize=1; targetWins=2; formatLabel='Solo - '+size+' MCs'; }
   else {
-    const tc=document.getElementById('teamcount');
-    if(!tc||!tc.value) return alert('MCs insuficientes para este formato.');
     size=parseInt(tc.value);
     teamSize=fmt==='dupla'?2:fmt==='trio'?3:4;
     targetWins=fmt==='dupla'?2:3;
