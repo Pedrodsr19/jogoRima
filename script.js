@@ -20,7 +20,29 @@ function normalizeDB(d){
   d.liga.seasonNumber=d.liga.seasonNumber||1;
   d.liga.seasonOffsets=d.liga.seasonOffsets||{};
   d.liga.seasonHistory=d.liga.seasonHistory||[];
+  d.nationalTitles=d.nationalTitles||[];
+  backfillNationalTitles(d);
   return d;
+}
+function backfillNationalTitles(d){
+  Object.entries(d.national.states||{}).forEach(([estado,sd])=>{
+    (sd.regionals||[]).forEach(reg=>{
+      if(reg.bracket && isBracketComplete(reg.bracket) && !reg.titleLogged){
+        const champ=bracketChampion(reg.bracket);
+        if(champ) d.nationalTitles.push({mcId:champ,type:'Regional',label:`Campeão Regional ${reg.idx} - ${estado}`});
+        reg.titleLogged=true;
+      }
+    });
+    if(sd.estadualBracket && isBracketComplete(sd.estadualBracket) && sd.estadualChampionMcId && !sd.estadualTitleLogged){
+      d.nationalTitles.push({mcId:sd.estadualChampionMcId,type:'Estadual',label:`Campeão Estadual - ${estado}`});
+      sd.estadualTitleLogged=true;
+    }
+  });
+  const nac=d.national.nacional;
+  if(nac && nac.phase==='done' && nac.championMcId && !nac.titleLogged){
+    d.nationalTitles.push({mcId:nac.championMcId,type:'Nacional',label:'Campeão Nacional'});
+    nac.titleLogged=true;
+  }
 }
 function loadDB(){
   let d=null;
@@ -400,11 +422,7 @@ function collectTitles(mcId){
     b.editions.forEach(ed=>{ if(editionChampionIds(ed).includes(mcId)) titles.push({type:'Edição',label:`Campeão - ${ed.name} (${b.name})`}); });
     (b.seasonHistory||[]).forEach(s=>{ if(s.championMcId===mcId) titles.push({type:'Temporada',label:`Temporada ${s.season} de Ranking - ${b.name}`}); });
   });
-  Object.entries(db.national.states).forEach(([estado,sd])=>{
-    (sd.regionals||[]).forEach(r=>{ if(isBracketComplete(r.bracket) && bracketChampion(r.bracket)===mcId) titles.push({type:'Regional',label:`Campeão Regional ${r.idx} - ${estado}`}); });
-    if(sd.estadualDone && sd.estadualChampionMcId===mcId) titles.push({type:'Estadual',label:`Campeão Estadual - ${estado}`});
-  });
-  if(db.national.nacional && db.national.nacional.championMcId===mcId) titles.push({type:'Nacional',label:'Campeão Nacional'});
+  (db.nationalTitles||[]).forEach(t=>{ if(t.mcId===mcId) titles.push({type:t.type,label:t.label}); });
   return titles;
 }
 
@@ -640,6 +658,20 @@ function renderMcModal(){
     </div>
     <h4>Títulos gerais (${titles.length})</h4>
     <div class="titlelist">${titles.length?titles.map(t=>`<div class="titlerow"><span class="badge">${t.type}</span> ${esc(t.label)}</div>`).join(''):'<p class="muted">Nenhum título ainda.</p>'}</div>`;
+  } else if(tab==='nacional'){
+    const natMatches=collectNationalMatchesForMc(id);
+    const natWins=natMatches.filter(x=>x.won).length;
+    const natTitles=(db.nationalTitles||[]).filter(t=>t.mcId===id);
+    const titRegional=natTitles.filter(t=>t.type==='Regional').length;
+    const titEstadual=natTitles.filter(t=>t.type==='Estadual').length;
+    const titNacional=natTitles.filter(t=>t.type==='Nacional').length;
+    body=`<div class="statgrid">
+      <div class="statbox"><b>${natWins}</b><span>Vitórias no Nacional</span></div>
+      <div class="statbox"><b>${titRegional}</b><span>Títulos de Regional</span></div>
+      <div class="statbox"><b>${titEstadual}</b><span>Títulos de Estadual</span></div>
+      <div class="statbox"><b>${titNacional}</b><span>Títulos de Nacional</span></div>
+    </div>
+    <div class="titlelist">${natTitles.length?natTitles.map(t=>`<div class="titlerow"><span class="badge">${t.type}</span> ${esc(t.label)}</div>`).join(''):'<p class="muted">Nenhum título no Nacional ainda.</p>'}</div>`;
   } else {
     const battle=battleById(tab);
     if(!battle){ window.__modalTab='geral'; return renderMcModal(); }
@@ -660,6 +692,7 @@ function renderMcModal(){
     </div>`;
   }
   const tabsHtml=`<div class="mtab ${tab==='geral'?'active':''}" onclick="switchModalTab('geral')">Geral</div>`+
+    `<div class="mtab ${tab==='nacional'?'active':''}" onclick="switchModalTab('nacional')">Nacional</div>`+
     mcBattles.map(bt=>`<div class="mtab ${tab===bt.id?'active':''}" onclick="switchModalTab('${bt.id}')">${esc(bt.name)}</div>`).join('');
   root.innerHTML=`<div class="modalOverlay" onclick="if(event.target===this)closeMcModal()">
     <div class="modalCard" style="${cardStyle}">
@@ -859,6 +892,11 @@ function simRegional(estado,idx,mode){
   if(mode==='one') simulateOne(reg.bracket,2);
   if(mode==='phase') simulatePhase(reg.bracket,2);
   if(mode==='all') simulateAll(reg.bracket,2);
+  if(isBracketComplete(reg.bracket) && !reg.titleLogged){
+    reg.titleLogged=true;
+    const champ=bracketChampion(reg.bracket);
+    db.nationalTitles.push({mcId:champ,type:'Regional',label:`Campeão Regional ${idx} - ${estado}`});
+  }
   save(); render();
 }
 function viewEstadual(estado){
@@ -867,7 +905,12 @@ function viewEstadual(estado){
   const html=renderBracketBlock(sd.estadualBracket,2,'simEstadual',[`'${estado.replace(/'/g,"\\'")}'`]);
   if(isBracketComplete(sd.estadualBracket) && !sd.estadualDone){
     sd.estadualChampionMcId=bracketChampion(sd.estadualBracket);
-    sd.estadualDone=true; save();
+    sd.estadualDone=true;
+    if(!sd.estadualTitleLogged){
+      sd.estadualTitleLogged=true;
+      db.nationalTitles.push({mcId:sd.estadualChampionMcId,type:'Estadual',label:`Campeão Estadual - ${estado}`});
+    }
+    save();
   }
   return `${topbar('Estadual',estado,'nacional/estado/'+encodeURIComponent(estado))}
   <div class="content"><div class="card">${html}</div></div>`;
@@ -930,7 +973,9 @@ function viewNacionalMain(){
   if(nac.phase==='main' && nac.mainBracket){
     body+=`<div class="card"><h3>Bracket Nacional</h3>${renderBracketBlock(nac.mainBracket,2,'simNacionalMain',[])}</div>`;
     if(isBracketComplete(nac.mainBracket) && !nac.championMcId){
-      nac.championMcId=bracketChampion(nac.mainBracket); nac.phase='done'; save();
+      nac.championMcId=bracketChampion(nac.mainBracket); nac.phase='done';
+      if(!nac.titleLogged){ nac.titleLogged=true; db.nationalTitles.push({mcId:nac.championMcId,type:'Nacional',label:'Campeão Nacional'}); }
+      save();
     }
   }
   if(nac.phase==='done'){
