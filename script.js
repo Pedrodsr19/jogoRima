@@ -22,6 +22,8 @@ function normalizeDB(d){
   d.liga.seasonHistory=d.liga.seasonHistory||[];
   d.nationalTitles=d.nationalTitles||[];
   d.fms=d.fms||{history:[],current:null};
+  d.fms.color=d.fms.color||'#2f6bff';
+  d.fms.color2=d.fms.color2||'#ff2d4d';
   d.fmsTitles=d.fmsTitles||[];
   backfillNationalTitles(d);
   return d;
@@ -288,12 +290,31 @@ function viewLiga(){
 }
 
 /* ================= FMS VIEWS ================= */
+window.__editFms=false;
+function toggleEditFms(){ window.__editFms=!window.__editFms; render(); }
+function saveFmsColors(){
+  db.fms.color=document.getElementById('editFmsColor1').value;
+  db.fms.color2=document.getElementById('editFmsColor2').value;
+  save(); window.__editFms=false; render();
+}
 function fmsNameFor(id){ return mcLink(id); }
 function viewFms(){
+  applyBattleTheme(db.fms.color,db.fms.color2);
   const cur=db.fms.current;
-  let body='';
+  const showEdit=!!window.__editFms;
+  const editBlock=`<div class="card">
+    <button class="btn secondary small" onclick="toggleEditFms()">${showEdit?'Cancelar':'Editar FMS (cores)'}</button>
+    ${showEdit?`<div style="margin-top:12px;">
+      <div class="grid2">
+        <div><label>Cor principal</label><input type="color" id="editFmsColor1" value="${db.fms.color}"></div>
+        <div><label>Cor secundária</label><input type="color" id="editFmsColor2" value="${db.fms.color2}"></div>
+      </div>
+      <button class="btn" onclick="saveFmsColors()">Salvar cores</button>
+    </div>`:''}
+  </div>`;
+  let body=editBlock;
   if(!cur){
-    body=`<div class="card"><p>Serão selecionados automaticamente os 45 MCs de maior nível (desempate: títulos, depois vitórias).</p>
+    body+=`<div class="card"><p>Serão selecionados automaticamente os 45 MCs de maior nível (desempate: títulos, depois vitórias).</p>
     <button class="btn" onclick="iniciarFMS()">Iniciar FMS</button></div>`;
     if(db.fms.history.length){
       body+=`<div class="card"><h3>Edições anteriores</h3>${db.fms.history.slice().reverse().map(ed=>`<div class="champrow"><span class="badge">Edição ${ed.edicao}</span> ${ed.championMcId?fmsNameFor(ed.championMcId):'—'}</div>`).join('')}</div>`;
@@ -322,6 +343,7 @@ function viewFms(){
   return `${topbar('FMS Brasil','Freestyle Master Series · Edição '+cur.edicao,'home')}<div class="content">${body}</div>`;
 }
 function viewFmsSeletiva(idx){
+  applyBattleTheme(db.fms.color,db.fms.color2);
   const cur=db.fms.current;
   const sel=cur.seletivas.find(s=>s.idx===idx);
   let body='';
@@ -356,6 +378,7 @@ function fmsGroupBlock(groupKey,group){
   </div>`;
 }
 function viewFmsPrincipal(){
+  applyBattleTheme(db.fms.color,db.fms.color2);
   const cur=db.fms.current;
   let body='';
   body+=fmsGroupBlock('A',cur.grupos.A);
@@ -447,13 +470,53 @@ function titleTierColor(c){
   if(c<20) return ['#7e22ce','#a855f7'];
   return null;
 }
-function titleTierDecoration(c,battleColor,battleColor2){
-  if(c<1) return '';
-  if(c<2) return 'radial-gradient(circle at 88% 12%, rgba(134,239,172,.28) 0%, transparent 42%), radial-gradient(circle at 8% 92%, rgba(74,222,128,.22) 0%, transparent 36%), radial-gradient(circle at 30% 20%, rgba(187,247,208,.14) 0%, transparent 30%)';
-  if(c<5) return 'radial-gradient(circle at 90% 10%, rgba(147,197,253,.28) 0%, transparent 42%), radial-gradient(circle at 10% 88%, rgba(96,165,250,.22) 0%, transparent 36%), radial-gradient(circle at 30% 25%, rgba(191,219,254,.14) 0%, transparent 30%)';
-  if(c<10) return 'radial-gradient(circle at 88% 10%, rgba(253,224,71,.3) 0%, transparent 45%), radial-gradient(circle at 10% 90%, rgba(250,204,21,.22) 0%, transparent 36%), radial-gradient(circle at 28% 22%, rgba(254,240,138,.15) 0%, transparent 30%)';
-  if(c<20) return 'radial-gradient(circle at 85% 12%, rgba(216,180,254,.3) 0%, transparent 45%), radial-gradient(circle at 12% 88%, rgba(192,132,252,.24) 0%, transparent 38%), radial-gradient(circle at 30% 25%, rgba(233,213,255,.15) 0%, transparent 30%)';
-  return `radial-gradient(circle at 88% 10%, ${lightenColor(battleColor,0.4)}55 0%, transparent 45%), radial-gradient(circle at 10% 90%, ${lightenColor(battleColor2,0.4)}55 0%, transparent 40%), radial-gradient(circle at 50% 50%, rgba(255,255,255,.08) 0%, transparent 55%)`;
+function titleTierIndex(c){ if(c<1)return 0; if(c<2)return 1; if(c<5)return 2; if(c<10)return 3; if(c<20)return 4; return 5; }
+function svgDataUrl(inner){
+  return `url('data:image/svg+xml,${encodeURIComponent(`<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 240 240">${inner}</svg>`)}')`;
+}
+function tierIllustrationSvg(tierIdx){
+  const OP='rgba(255,255,255,0.16)', OP2='rgba(255,255,255,0.1)';
+  if(tierIdx===0) return '';
+  if(tierIdx===1){ // folhas
+    return svgDataUrl(`
+      <path d="M205 15 C175 35 160 70 185 100 C215 80 230 40 205 15 Z" fill="${OP}"/>
+      <path d="M195 55 L188 95" stroke="${OP}" stroke-width="4" fill="none"/>
+      <path d="M15 210 C0 190 8 155 35 140 C45 175 35 200 15 210 Z" fill="${OP2}"/>
+      <path d="M25 175 L20 205" stroke="${OP2}" stroke-width="3" fill="none"/>
+    `);
+  }
+  if(tierIdx===2){ // ondas
+    return svgDataUrl(`
+      <path d="M-10 190 Q20 165 50 190 T110 190 T170 190 T230 190" stroke="${OP}" stroke-width="6" fill="none"/>
+      <path d="M-10 210 Q20 190 50 210 T110 210 T170 210 T230 210" stroke="${OP2}" stroke-width="5" fill="none"/>
+      <circle cx="195" cy="35" r="14" fill="${OP}"/>
+      <circle cx="170" cy="60" r="7" fill="${OP2}"/>
+    `);
+  }
+  if(tierIdx===3){ // sol
+    let rays='';
+    for(let i=0;i<8;i++){ const a=(i*Math.PI)/4; const x1=200+Math.cos(a)*26, y1=35+Math.sin(a)*26, x2=200+Math.cos(a)*40, y2=35+Math.sin(a)*40; rays+=`<line x1="${x1.toFixed(1)}" y1="${y1.toFixed(1)}" x2="${x2.toFixed(1)}" y2="${y2.toFixed(1)}" stroke="${OP}" stroke-width="4"/>`; }
+    return svgDataUrl(`<circle cx="200" cy="35" r="20" fill="${OP}"/>${rays}`);
+  }
+  if(tierIdx===4){ // sparkles / roxo
+    const star=(cx,cy,s,op)=>`<path d="M${cx} ${cy-s} L${cx+s*0.28} ${cy-s*0.28} L${cx+s} ${cy} L${cx+s*0.28} ${cy+s*0.28} L${cx} ${cy+s} L${cx-s*0.28} ${cy+s*0.28} L${cx-s} ${cy} L${cx-s*0.28} ${cy-s*0.28} Z" fill="${op}"/>`;
+    return svgDataUrl(`${star(200,40,22,OP)}${star(30,200,16,OP2)}${star(210,190,10,OP2)}`);
+  }
+  // tier 5 - colorido: coroa + brilhos
+  const star=(cx,cy,s,op)=>`<path d="M${cx} ${cy-s} L${cx+s*0.28} ${cy-s*0.28} L${cx+s} ${cy} L${cx+s*0.28} ${cy+s*0.28} L${cx} ${cy+s} L${cx-s*0.28} ${cy+s*0.28} L${cx-s} ${cy} L${cx-s*0.28} ${cy-s*0.28} Z" fill="${op}"/>`;
+  return svgDataUrl(`
+    <path d="M40 90 L58 40 L76 75 L95 30 L114 75 L132 40 L150 90 Z" fill="${OP}"/>
+    <rect x="38" y="90" width="114" height="14" rx="4" fill="${OP}"/>
+    ${star(195,180,14,OP2)}${star(25,190,10,OP2)}
+  `);
+}
+function buildCardStyle(count,c1,c2){
+  const tierColors=titleTierColor(count);
+  const s1=tierColors?tierColors[0]:c1, s2=tierColors?tierColors[1]:c2;
+  const illus=tierIllustrationSvg(titleTierIndex(count));
+  const bgImage=illus?`${illus}, linear-gradient(135deg,${s1},${s2})`:`linear-gradient(135deg,${s1},${s2})`;
+  const sizePos=illus?`background-size:cover, cover; background-position:center, center; background-repeat:no-repeat, no-repeat;`:'';
+  return `background-image:${bgImage}; ${sizePos} border-top-color:${s1};`;
 }
 function ultimosCampeoes(battle,n){
   n=n||6;
@@ -940,10 +1003,7 @@ function renderMcModal(){
     </div>
     <h4>Títulos gerais (${titles.length})</h4>
     <div class="titlelist">${titles.length?titles.map(t=>`<div class="titlerow"><span class="badge">${t.type}</span> ${esc(t.label)}</div>`).join(''):'<p class="muted">Nenhum título ainda.</p>'}</div>`;
-    const tierColorsG=titleTierColor(titles.length);
-    const gs1=tierColorsG?tierColorsG[0]:'#2f6bff', gs2=tierColorsG?tierColorsG[1]:'#ff2d4d';
-    const decorG=titleTierDecoration(titles.length,'#2f6bff','#ff2d4d');
-    cardStyle=`background:${decorG?decorG+',':''}linear-gradient(135deg,${gs1},${gs2});border-top-color:${gs1};`;
+    cardStyle=buildCardStyle(titles.length,'#2f6bff','#ff2d4d');
   } else if(tab==='nacional'){
     const natMatches=collectNationalMatchesForMc(id);
     const natWins=natMatches.filter(x=>x.won).length;
@@ -970,10 +1030,7 @@ function renderMcModal(){
       <div class="statbox"><b>${fs.titleCount}</b><span>Título FMS</span></div>
       <div class="statbox"><b>${fs.winrate}%</b><span>Aproveitamento</span></div>
     </div>`;
-    const tierColorsF=titleTierColor(fs.titleCount);
-    const fs1=tierColorsF?tierColorsF[0]:'#2f6bff', fs2=tierColorsF?tierColorsF[1]:'#ff2d4d';
-    const decorF=titleTierDecoration(fs.titleCount,'#2f6bff','#ff2d4d');
-    cardStyle=`background:${decorF?decorF+',':''}linear-gradient(135deg,${fs1},${fs2});border-top-color:${fs1};`;
+    cardStyle=buildCardStyle(fs.titleCount,'#2f6bff','#ff2d4d');
   } else {
     const battle=battleById(tab);
     if(!battle){ window.__modalTab='geral'; return renderMcModal(); }
@@ -981,10 +1038,7 @@ function renderMcModal(){
     const wins=matches.filter(x=>x.won).length, losses=matches.length-wins;
     const titleCount=titleCountsForBattle(battle)[id]||0;
     const participacoes=battleParticipations(battle,id);
-    const tierColors=titleTierColor(titleCount);
-    const s1=tierColors?tierColors[0]:battle.color, s2=tierColors?tierColors[1]:battle.color2;
-    const decoration=titleTierDecoration(titleCount,battle.color,battle.color2);
-    cardStyle=`background:${decoration?decoration+',':''}linear-gradient(135deg,${s1},${s2});border-top-color:${s1};background-blend-mode:normal;`;
+    cardStyle=buildCardStyle(titleCount,battle.color,battle.color2);
     body=`<div class="statgrid">
       <div class="statbox"><b>${matches.length}</b><span>Batalhas</span></div>
       <div class="statbox"><b>${wins}</b><span>Vitórias</span></div>
