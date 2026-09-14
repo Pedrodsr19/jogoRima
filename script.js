@@ -7,7 +7,12 @@ function normalizeDB(d){
     id:b.id,name:b.name,color:b.color||'#144fe0',color2:b.color2||'#e11d33',
     mcIds:b.mcIds||[],editions:b.editions||[],ranking:b.ranking||{},
     currentSeason:b.currentSeason||1, seasonHistory:b.seasonHistory||[],
-    scoring:b.scoring||undefined
+    scoring:b.scoring||undefined,
+    estado:b.estado||'', tipo:b.tipo||'mainstream'
+  }));
+  d.events=(d.events||[]).map(ev=>({
+    id:ev.id,name:ev.name,color:ev.color||'#144fe0',color2:ev.color2||'#e11d33',
+    mcIds:ev.mcIds||[],editions:ev.editions||[]
   }));
   d.national=d.national||{states:{},nacional:null};
   d.national.states=d.national.states||{};
@@ -74,6 +79,7 @@ function mcLink(id,nameFallback){
   return esc(nameFallback||'');
 }
 function battleById(id){return db.battles.find(b=>b.id===id);}
+function eventById(id){return db.events.find(e=>e.id===id);}
 
 function calcProb(la,lb){
   const diff=la-lb;
@@ -186,7 +192,21 @@ function computePlacements(bracket,scoring){
     else { pts = pointsForDepth(depth); }
     bracket.rounds[i].forEach(m=>{ if(m.done && m.loser!=null && res[m.loser]===undefined) res[m.loser]=pts; });
   }
+  Object.keys(res).forEach(pid=>{
+    const bonus=count20WinsForParticipant(bracket,pid);
+    if(bonus) res[pid]+=bonus;
+  });
   return res;
+}
+function count20WinsForParticipant(bracket,pid){
+  let c=0;
+  bracket.rounds.forEach(round=>round.forEach(m=>{
+    if(m.done && m.winner===pid){
+      const diff=Math.abs((m.scoreA||0)-(m.scoreB||0));
+      if(diff===2) c++;
+    }
+  }));
+  return c;
 }
 function applyRankingIfNeeded(battle,edition){
   if(edition.pointsApplied) return;
@@ -261,6 +281,8 @@ function finalizarTemporadaLiga(){
   db.liga.seasonNumber+=1;
   save(); render();
 }
+window.__ligaTab='semanal';
+function switchLigaTab(tab){ window.__ligaTab=tab; render(); }
 function viewLiga(){
   applyBattleTheme(db.liga.color,db.liga.color2);
   const showEdit=!!window.__editLiga;
@@ -269,6 +291,7 @@ function viewLiga(){
   const weeklyRows=weekly.map((r,i)=>`<div class="rankrow"><div><span class="pos">${i+1}º</span> ${mcLink(r[0])}</div><b>${r[1]} pts</b></div>`).join('');
   const seasonRows=season.map((r,i)=>`<div class="rankrow"><div><span class="pos">${i+1}º</span> ${mcLink(r[0])}</div><b>${r[1]} pts</b></div>`).join('');
   const history=db.liga.seasonHistory.slice().reverse().map(s=>`<div class="champrow"><span class="badge">Temporada ${s.season}</span> ${mcLink(s.championMcId)}</div>`).join('');
+  const tab=window.__ligaTab;
   return `${topbar('Liga Central','Ranking geral de todas as batalhas','battles')}
   <div class="content">
     <div class="card">
@@ -281,11 +304,15 @@ function viewLiga(){
         <button class="btn" onclick="saveLigaColors()">Salvar cores</button>
       </div>`:''}
     </div>
-    <div class="card"><h3>Ranking Semanal</h3><p class="note">Última edição de cada batalha, automático.</p>${weeklyRows||'<p class="muted">Sem resultados ainda.</p>'}</div>
-    <div class="card"><h3>Ranking · Temporada ${db.liga.seasonNumber}</h3>${seasonRows||'<p class="muted">Sem resultados ainda nesta temporada.</p>'}
+    <div class="modalTabs" style="border-color:var(--line);">
+      <div class="mtab ${tab==='semanal'?'active':''}" onclick="switchLigaTab('semanal')">Liga Semanal</div>
+      <div class="mtab ${tab==='temporada'?'active':''}" onclick="switchLigaTab('temporada')">Liga da Temporada</div>
+    </div>
+    ${tab==='semanal'?`<div class="card"><h3>Ranking Semanal</h3><p class="note">Última edição de cada batalha, automático.</p>${weeklyRows||'<p class="muted">Sem resultados ainda.</p>'}</div>`:''}
+    ${tab==='temporada'?`<div class="card"><h3>Ranking · Temporada ${db.liga.seasonNumber}</h3>${seasonRows||'<p class="muted">Sem resultados ainda nesta temporada.</p>'}
       <button class="btn gold small" style="margin-top:12px;" onclick="finalizarTemporadaLiga()" ${season.length===0?'disabled':''}>Finalizar Temporada</button>
     </div>
-    ${history?`<div class="card"><h3>Campeões de Temporada</h3>${history}</div>`:''}
+    ${history?`<div class="card"><h3>Campeões de Temporada</h3>${history}</div>`:''}`:''}
   </div>`;
 }
 
@@ -467,15 +494,18 @@ function titleTierColor(c){
   if(c<2) return ['#1e8a4c','#22c55e'];
   if(c<5) return ['#1d4ed8','#3b82f6'];
   if(c<10) return ['#b45309','#eab308'];
-  if(c<20) return ['#7e22ce','#a855f7'];
+  if(c<15) return ['#7e22ce','#a855f7'];
+  if(c<20) return ['#7f1d1d','#ef4444'];
+  if(c<30) return ['#111111','#f5f5f5'];
   return null;
 }
-function titleTierIndex(c){ if(c<1)return 0; if(c<2)return 1; if(c<5)return 2; if(c<10)return 3; if(c<20)return 4; return 5; }
+function titleTierIndex(c){ if(c<1)return 0; if(c<2)return 1; if(c<5)return 2; if(c<10)return 3; if(c<15)return 4; if(c<20)return 5; if(c<30)return 6; return 7; }
 function svgDataUrl(inner){
   return `url('data:image/svg+xml,${encodeURIComponent(`<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 240 240">${inner}</svg>`)}')`;
 }
 function tierIllustrationSvg(tierIdx){
   const OP='rgba(255,255,255,0.16)', OP2='rgba(255,255,255,0.1)';
+  const star=(cx,cy,s,op)=>`<path d="M${cx} ${cy-s} L${cx+s*0.28} ${cy-s*0.28} L${cx+s} ${cy} L${cx+s*0.28} ${cy+s*0.28} L${cx} ${cy+s} L${cx-s*0.28} ${cy+s*0.28} L${cx-s} ${cy} L${cx-s*0.28} ${cy-s*0.28} Z" fill="${op}"/>`;
   if(tierIdx===0) return '';
   if(tierIdx===1){ // folhas
     return svgDataUrl(`
@@ -499,24 +529,35 @@ function tierIllustrationSvg(tierIdx){
     return svgDataUrl(`<circle cx="200" cy="35" r="20" fill="${OP}"/>${rays}`);
   }
   if(tierIdx===4){ // sparkles / roxo
-    const star=(cx,cy,s,op)=>`<path d="M${cx} ${cy-s} L${cx+s*0.28} ${cy-s*0.28} L${cx+s} ${cy} L${cx+s*0.28} ${cy+s*0.28} L${cx} ${cy+s} L${cx-s*0.28} ${cy+s*0.28} L${cx-s} ${cy} L${cx-s*0.28} ${cy-s*0.28} Z" fill="${op}"/>`;
     return svgDataUrl(`${star(200,40,22,OP)}${star(30,200,16,OP2)}${star(210,190,10,OP2)}`);
   }
-  // tier 5 - colorido: coroa + brilhos
-  const star=(cx,cy,s,op)=>`<path d="M${cx} ${cy-s} L${cx+s*0.28} ${cy-s*0.28} L${cx+s} ${cy} L${cx+s*0.28} ${cy+s*0.28} L${cx} ${cy+s} L${cx-s*0.28} ${cy+s*0.28} L${cx-s} ${cy} L${cx-s*0.28} ${cy-s*0.28} Z" fill="${op}"/>`;
+  if(tierIdx===5){ // chamas / vermelho
+    return svgDataUrl(`
+      <path d="M200 20 C185 45 175 68 190 88 C200 74 210 60 205 40 C216 55 226 75 210 96 C232 84 236 52 200 20 Z" fill="${OP}"/>
+      <path d="M35 145 C26 160 21 176 30 188 C36 179 42 170 39 158 C47 167 53 180 44 192 C58 185 60 162 35 145 Z" fill="${OP2}"/>
+    `);
+  }
+  if(tierIdx===6){ // preto e branco - losangos geométricos
+    const diamond=(cx,cy,s,op)=>`<rect x="${cx-s/2}" y="${cy-s/2}" width="${s}" height="${s}" transform="rotate(45 ${cx} ${cy})" fill="none" stroke="${op}" stroke-width="3"/>`;
+    return svgDataUrl(`${diamond(195,40,34,OP)}${diamond(195,40,18,OP2)}${diamond(30,200,26,OP)}${diamond(30,200,12,OP2)}`);
+  }
+  // tier 7 - colorido 30+: coroa + brilhos
   return svgDataUrl(`
     <path d="M40 90 L58 40 L76 75 L95 30 L114 75 L132 40 L150 90 Z" fill="${OP}"/>
     <rect x="38" y="90" width="114" height="14" rx="4" fill="${OP}"/>
     ${star(195,180,14,OP2)}${star(25,190,10,OP2)}
   `);
 }
-function buildCardStyle(count,c1,c2){
-  const tierColors=titleTierColor(count);
-  const s1=tierColors?tierColors[0]:c1, s2=tierColors?tierColors[1]:c2;
-  const illus=tierIllustrationSvg(titleTierIndex(count));
-  const bgImage=illus?`${illus}, linear-gradient(135deg,${s1},${s2})`:`linear-gradient(135deg,${s1},${s2})`;
+function buildCardStyle(count){
+  const idx=titleTierIndex(count);
+  let grad;
+  if(idx===7){ grad=`linear-gradient(120deg,#3b82f6 0%,#ef4444 20%,#eab308 40%,#22c55e 60%,#a855f7 80%,#3b82f6 100%)`; }
+  else { const tc=titleTierColor(count); grad=`linear-gradient(135deg,${tc[0]},${tc[1]})`; }
+  const illus=tierIllustrationSvg(idx);
+  const bgImage=illus?`${illus}, ${grad}`:grad;
   const sizePos=illus?`background-size:cover, cover; background-position:center, center; background-repeat:no-repeat, no-repeat;`:'';
-  return `background-image:${bgImage}; ${sizePos} border-top-color:${s1};`;
+  const borderColor=idx===7?'#a855f7':titleTierColor(count)[0];
+  return `background-image:${bgImage}; ${sizePos} border-top-color:${borderColor};`;
 }
 function ultimosCampeoes(battle,n){
   n=n||6;
@@ -855,12 +896,17 @@ function render(){
   else if(r[0]==='fms' && !r[1]) html=viewFms();
   else if(r[0]==='fms' && r[1]==='seletiva') html=viewFmsSeletiva(parseInt(r[2]));
   else if(r[0]==='fms' && r[1]==='principal') html=viewFmsPrincipal();
+  else if(r[0]==='events') html=viewEvents();
+  else if(r[0]==='event' && r[1]==='newedition') html=viewNewEventEdition(r[2]);
+  else if(r[0]==='event' && r[1]) html=viewEventDetail(r[1]);
+  else if(r[0]==='eventedition') html=viewEventEdition(r[1],r[2]);
   else if(r[0]==='battle' && r[1] && !r[2]) html=viewBattleDetail(r[1]);
   else if(r[0]==='battle' && r[1]==='newedition') html=viewNewEdition(r[2]);
   else if(r[0]==='edition') html=viewEdition(r[1],r[2]);
   else html=viewHome();
   root.innerHTML=html;
   if(r[0]==='battle' && r[1]==='newedition') updateTeamOptions(r[2]);
+  if(r[0]==='event' && r[1]==='newedition') updateEventTeamOptions(r[2]);
   window.scrollTo(0,0);
 }
 
@@ -877,6 +923,7 @@ function viewHome(){
     <div class="navcard hero2" onclick="nav('nacional')"><div><h3>🏆 Estrutura Nacional</h3><div class="muted">Regional → Estadual → Nacional</div></div><div class="chev">›</div></div>
     <div class="navcard hero3" onclick="nav('battles')"><div><h3>🔥 Batalhas</h3><div class="muted">${db.battles.length} batalha(s) criadas</div></div><div class="chev">›</div></div>
     <div class="navcard" onclick="nav('fms')"><div><h3>🎙️ FMS Brasil</h3><div class="muted">${db.fms.current?'Edição '+db.fms.current.edicao+' em andamento':'Nenhuma edição em andamento'}</div></div><div class="chev">›</div></div>
+    <div class="navcard" onclick="nav('events')"><div><h3>✨ Eventos Especiais</h3><div class="muted">${db.events.length} evento(s) criados</div></div><div class="chev">›</div></div>
   </div>
   <div class="card">
     <h3>Backup</h3>
@@ -1003,7 +1050,7 @@ function renderMcModal(){
     </div>
     <h4>Títulos gerais (${titles.length})</h4>
     <div class="titlelist">${titles.length?titles.map(t=>`<div class="titlerow"><span class="badge">${t.type}</span> ${esc(t.label)}</div>`).join(''):'<p class="muted">Nenhum título ainda.</p>'}</div>`;
-    cardStyle=buildCardStyle(titles.length,'#2f6bff','#ff2d4d');
+    cardStyle=buildCardStyle(titles.length);
   } else if(tab==='nacional'){
     const natMatches=collectNationalMatchesForMc(id);
     const natWins=natMatches.filter(x=>x.won).length;
@@ -1030,7 +1077,7 @@ function renderMcModal(){
       <div class="statbox"><b>${fs.titleCount}</b><span>Título FMS</span></div>
       <div class="statbox"><b>${fs.winrate}%</b><span>Aproveitamento</span></div>
     </div>`;
-    cardStyle=buildCardStyle(fs.titleCount,'#2f6bff','#ff2d4d');
+    cardStyle=buildCardStyle(fs.titleCount);
   } else {
     const battle=battleById(tab);
     if(!battle){ window.__modalTab='geral'; return renderMcModal(); }
@@ -1038,7 +1085,7 @@ function renderMcModal(){
     const wins=matches.filter(x=>x.won).length, losses=matches.length-wins;
     const titleCount=titleCountsForBattle(battle)[id]||0;
     const participacoes=battleParticipations(battle,id);
-    cardStyle=buildCardStyle(titleCount,battle.color,battle.color2);
+    cardStyle=buildCardStyle(titleCount);
     body=`<div class="statgrid">
       <div class="statbox"><b>${matches.length}</b><span>Batalhas</span></div>
       <div class="statbox"><b>${wins}</b><span>Vitórias</span></div>
@@ -1470,6 +1517,8 @@ function saveBattleEdit(id){
   b.name=name;
   b.color=document.getElementById('editBattleColor1').value;
   b.color2=document.getElementById('editBattleColor2').value;
+  b.estado=document.getElementById('editBattleEstado').value.trim();
+  b.tipo=document.getElementById('editBattleTipo').value;
   save(); window.__editBattle[id]=false; render();
 }
 function saveBattleScoring(id){
@@ -1524,6 +1573,14 @@ function viewBattleDetail(id){
           <div><label>Cor principal</label><input type="color" id="editBattleColor1" value="${b.color}"></div>
           <div><label>Cor secundária</label><input type="color" id="editBattleColor2" value="${b.color2}"></div>
         </div>
+        <div class="grid2">
+          <div><label>Estado</label><input id="editBattleEstado" placeholder="Ex: SP" value="${esc(b.estado||'')}"></div>
+          <div><label>Tipo</label><select id="editBattleTipo">
+            <option value="mainstream" ${b.tipo==='mainstream'?'selected':''}>Mainstream</option>
+            <option value="underground" ${b.tipo==='underground'?'selected':''}>Underground</option>
+          </select></div>
+        </div>
+        <p class="note">Underground reduz em 50% a chance de sorteio de MCs de outro estado (usa o estado definido acima).</p>
         <button class="btn" onclick="saveBattleEdit('${b.id}')">Salvar Batalha</button>
         <h4>Pontuação do ranking</h4>
         <div class="grid2">
@@ -1612,7 +1669,7 @@ function updateTeamOptions(battleId){
   const teamSizeMap={dupla:2,trio:3,quarteto:4};
   const ts=teamSizeMap[fmt];
   const maxTeams=Math.floor(b.mcIds.length/ts);
-  const opts=[4,8,16,32].filter(v=>v<=maxTeams);
+  const opts=[4,8,16].filter(v=>v<=maxTeams);
   wrap.innerHTML=`<label>Quantidade de equipes</label><select id="teamcount">${opts.map(o=>`<option value="${o}">${o} equipes (${o*ts} MCs)</option>`).join('')||'<option disabled>MCs insuficientes</option>'}</select>`;
 }
 function weightedDraft(battle,needed){
@@ -1624,6 +1681,9 @@ function weightedDraft(battle,needed){
   const restW=restCount>0?0.2/restCount:0;
   const weight={};
   sorted.forEach((id,i)=>{ weight[id]=i<topCount?topW:restW; });
+  if(battle.tipo==='underground' && battle.estado){
+    ids.forEach(id=>{ const m=mcById(id); if(m && m.estado!==battle.estado){ weight[id]=weight[id]*0.5; } });
+  }
   const keyed=ids.map(id=>({id,key:Math.pow(Math.random(),1/Math.max(weight[id],1e-6))}));
   keyed.sort((a,b)=>b.key-a.key);
   return keyed.slice(0,needed).map(x=>x.id);
@@ -1678,6 +1738,189 @@ function simEdition(battleId,edId,mode){
   if(mode==='phase') simulatePhase(ed.bracket,ed.targetWins);
   if(mode==='all') simulateAll(ed.bracket,ed.targetWins);
   applyRankingIfNeeded(b,ed);
+  save(); render();
+}
+
+/* ================= EVENTOS ESPECIAIS ================= */
+window.__showParticipantsEv={};
+window.__editEvent={};
+window.__showNewEventForm=false;
+function toggleParticipantsEv(id){ window.__showParticipantsEv[id]=!window.__showParticipantsEv[id]; render(); }
+function toggleEditEvent(id){ window.__editEvent[id]=!window.__editEvent[id]; render(); }
+function toggleNewEventForm(){ window.__showNewEventForm=!window.__showNewEventForm; render(); }
+function createSpecialEvent(){
+  const name=document.getElementById('eventname').value.trim();
+  if(!name) return alert('Digite um nome.');
+  const color=document.getElementById('eventcolor1').value;
+  const color2=document.getElementById('eventcolor2').value;
+  db.events.push({id:uid(),name,color,color2,mcIds:[],editions:[]});
+  save(); window.__showNewEventForm=false; nav('events');
+}
+function saveEventEdit(id){
+  const ev=eventById(id);
+  const name=document.getElementById('editEventName').value.trim();
+  if(!name) return alert('Digite um nome.');
+  ev.name=name;
+  ev.color=document.getElementById('editEventColor1').value;
+  ev.color2=document.getElementById('editEventColor2').value;
+  save(); window.__editEvent[id]=false; render();
+}
+function deleteEvent(id){
+  const ev=eventById(id); if(!ev) return;
+  if(!confirm(`Excluir o evento "${ev.name}"? Isso apaga todas as edições dele. Os MCs cadastrados não são afetados.`)) return;
+  db.events=db.events.filter(e=>e.id!==id);
+  save(); nav('events');
+}
+function toggleMcEvent(eventId,mcId){
+  const ev=eventById(eventId);
+  if(ev.mcIds.includes(mcId)) ev.mcIds=ev.mcIds.filter(x=>x!==mcId); else ev.mcIds.push(mcId);
+  save();
+  const btn=document.getElementById('createEventEditionBtn'); if(btn) btn.disabled=ev.mcIds.length<8;
+  const cnt=document.getElementById('evSelCount'); if(cnt) cnt.textContent=ev.mcIds.length;
+}
+function viewEvents(){
+  const showNew=!!window.__showNewEventForm;
+  const rows=`<div class="list-grid">${db.events.map(ev=>{
+    const txt=contrastText(ev.color);
+    const muted=txt==='#ffffff'?'rgba(255,255,255,.85)':'rgba(18,20,28,.7)';
+    return `<div class="navcard" onclick="nav('event/${ev.id}')" style="background:linear-gradient(120deg,${ev.color},${ev.color2});border:none;">
+      <div><h3 style="color:${txt};">${esc(ev.name)}</h3><div class="muted" style="color:${muted};">${ev.mcIds.length} MC(s) · ${ev.editions.length} edição(ões)</div></div><div class="chev" style="color:${txt};">›</div>
+    </div>`;}).join('')}</div>`;
+  return `${topbar('Eventos Especiais','Torneios especiais, sem ranking','home')}
+  <div class="content">
+    <div class="card">
+      <button class="btn secondary small" onclick="toggleNewEventForm()">${showNew?'Cancelar':'Criar Evento'}</button>
+      ${showNew?`<div style="margin-top:12px;">
+        <label>Nome</label><input id="eventname" placeholder="Nome do evento">
+        <div class="grid2">
+          <div><label>Cor principal</label><input type="color" id="eventcolor1" value="#144fe0"></div>
+          <div><label>Cor secundária</label><input type="color" id="eventcolor2" value="#e11d33"></div>
+        </div>
+        <button class="btn" onclick="createSpecialEvent()">Criar Evento</button>
+      </div>`:''}
+    </div>
+    ${db.events.length?rows:'<p class="muted">Nenhum evento criado.</p>'}
+  </div>`;
+}
+function viewEventDetail(id){
+  const ev=eventById(id); if(!ev) return viewEvents();
+  applyBattleTheme(ev.color,ev.color2);
+  const showEdit=!!window.__editEvent[id];
+  const showParts=!!window.__showParticipantsEv[id];
+  const mcCheck=db.mcs.map(m=>`
+    <label class="checkline"><input type="checkbox" id="chkEv_${m.id}" ${ev.mcIds.includes(m.id)?'checked':''} onchange="toggleMcEvent('${ev.id}','${m.id}')"><span>${esc(m.name)} <span class="muted">(${esc(m.estado)} · ${m.nivel})</span></span></label>`).join('');
+  const editions=`<div class="list-grid">${ev.editions.map(ed=>`
+    <div class="navcard" onclick="nav('eventedition/${ev.id}/${ed.id}')"><div><h3>${esc(ed.name)}</h3><div class="muted">${esc(ed.formatLabel)} · ${isBracketComplete(ed.bracket)?'Concluída':'Em andamento'}</div></div><div class="chev">›</div></div>`).join('')}</div>`;
+  const canCreate=ev.mcIds.length>=8;
+  return `${topbar(ev.name,ev.mcIds.length+' MC(s) participantes','events')}
+  <div class="content">
+    <div class="card">
+      <div class="actionsrow" style="margin-top:0;">
+        <button class="btn secondary small" onclick="toggleEditEvent('${ev.id}')">${showEdit?'Cancelar edição':'Editar Evento'}</button>
+        <button class="btn danger small" onclick="deleteEvent('${ev.id}')">Excluir Evento</button>
+      </div>
+      ${showEdit?`<div style="margin-top:12px;">
+        <label>Nome</label><input id="editEventName" value="${esc(ev.name)}">
+        <div class="grid2">
+          <div><label>Cor principal</label><input type="color" id="editEventColor1" value="${ev.color}"></div>
+          <div><label>Cor secundária</label><input type="color" id="editEventColor2" value="${ev.color2}"></div>
+        </div>
+        <button class="btn" onclick="saveEventEdit('${ev.id}')">Salvar Evento</button>
+      </div>`:''}
+    </div>
+    <div class="card">
+      <h3>MCs participantes</h3>
+      <button class="btn secondary small" onclick="toggleParticipantsEv('${ev.id}')">${showParts?'Ocultar lista':'Ver / selecionar MCs participantes'}</button>
+      <p class="note">Mínimo de 8 MCs para criar edições (selecionados: <span id="evSelCount">${ev.mcIds.length}</span>).</p>
+      ${showParts?`<div style="margin-top:10px;">${mcCheck||'<p class="muted">Cadastre MCs primeiro.</p>'}</div>`:''}
+    </div>
+    <div class="card"><h3>Edições</h3>${ev.editions.length?editions:'<p class="muted">Nenhuma edição criada.</p>'}
+      <button class="btn" id="createEventEditionBtn" ${canCreate?'':'disabled'} onclick="nav('event/newedition/${ev.id}')">Criar Edição</button>
+    </div>
+    <p class="note">Eventos Especiais não possuem ranking, temporada nem participam da Liga Central.</p>
+  </div>`;
+}
+function viewNewEventEdition(eventId){
+  const ev=eventById(eventId); if(!ev) return viewEvents();
+  applyBattleTheme(ev.color,ev.color2);
+  return `${topbar('Nova Edição',ev.name,'event/'+ev.id)}
+  <div class="content">
+    <div class="card">
+      <label>Nome da edição</label><input id="evEdname" placeholder="Ex: Edição 01" value="Edição ${ev.editions.length+1}">
+      <label>Modalidade</label>
+      <select id="evEdformat" onchange="updateEventTeamOptions('${ev.id}')">
+        <option value="solo">Solo</option>
+        <option value="dupla">Duplas</option>
+        <option value="trio">Trios</option>
+        <option value="quarteto">Quartetos</option>
+      </select>
+      <div id="evTeamcountwrap"></div>
+      <button class="btn" onclick="createEventEdition('${ev.id}')">Criar e Sortear</button>
+    </div>
+  </div>`;
+}
+function updateEventTeamOptions(eventId){
+  const ev=eventById(eventId);
+  const fmtEl=document.getElementById('evEdformat'); if(!fmtEl) return;
+  const fmt=fmtEl.value;
+  const wrap=document.getElementById('evTeamcountwrap');
+  if(fmt==='solo'){
+    const opts=[8,16,32].filter(s=>ev.mcIds.length>=s);
+    wrap.innerHTML=`<label>Quantidade de MCs</label><select id="evTeamcount">${opts.map(o=>`<option value="${o}">${o} MCs</option>`).join('')||'<option disabled>MCs insuficientes</option>'}</select>`;
+    return;
+  }
+  const teamSizeMap={dupla:2,trio:3,quarteto:4};
+  const ts=teamSizeMap[fmt];
+  const maxTeams=Math.floor(ev.mcIds.length/ts);
+  const capOptions=fmt==='dupla'?[4,8,16,32]:[4,8,16];
+  const opts=capOptions.filter(v=>v<=maxTeams);
+  wrap.innerHTML=`<label>Quantidade de equipes</label><select id="evTeamcount">${opts.map(o=>`<option value="${o}">${o} equipes (${o*ts} MCs)</option>`).join('')||'<option disabled>MCs insuficientes</option>'}</select>`;
+}
+function createEventEdition(eventId){
+  const ev=eventById(eventId);
+  const name=document.getElementById('evEdname').value.trim()||'Edição';
+  const fmt=document.getElementById('evEdformat').value;
+  const tc=document.getElementById('evTeamcount');
+  if(!tc||!tc.value) return alert('MCs insuficientes para este formato.');
+  let size,teamSize,targetWins,formatLabel;
+  size=parseInt(tc.value);
+  if(fmt==='solo'){ teamSize=1; targetWins=2; formatLabel='Solo - '+size+' MCs'; }
+  else {
+    teamSize=fmt==='dupla'?2:fmt==='trio'?3:4;
+    targetWins=fmt==='dupla'?2:3;
+    formatLabel=(fmt==='dupla'?'Duplas':fmt==='trio'?'Trios':'Quartetos')+' - '+size+' equipes';
+  }
+  const needed=size*teamSize;
+  if(ev.mcIds.length<needed) return alert('MCs insuficientes.');
+  const pool=shuffle(ev.mcIds).slice(0,needed);
+  let participants;
+  if(teamSize===1){
+    participants=pool.map(mcParticipant);
+  } else {
+    const groups=chunk(pool,teamSize);
+    participants=groups.map(g=>{
+      const mcs=g.map(mcById);
+      const level=Math.round(mcs.reduce((s,m)=>s+m.nivel,0)/mcs.length);
+      return {id:uid(),kind:'team',name:mcs.map(m=>m.name).join(' & '),level,mcIds:g};
+    });
+  }
+  const bracket=buildBracket(shuffle(participants));
+  ev.editions.push({id:uid(),name,format:fmt,formatLabel,size,teamSize,targetWins,bracket,status:'drawn'});
+  save(); nav('eventedition/'+ev.id+'/'+ev.editions[ev.editions.length-1].id);
+}
+function viewEventEdition(eventId,edId){
+  const ev=eventById(eventId); if(!ev) return viewEvents();
+  const ed=ev.editions.find(e=>e.id===edId); if(!ed) return viewEventDetail(eventId);
+  applyBattleTheme(ev.color,ev.color2);
+  const html=renderBracketBlock(ed.bracket,ed.targetWins,'simEventEdition',[`'${eventId}'`,`'${edId}'`]);
+  return `${topbar(ed.name,ed.formatLabel,'event/'+eventId)}
+  <div class="content"><div class="card">${html}</div></div>`;
+}
+function simEventEdition(eventId,edId,mode){
+  const ev=eventById(eventId); const ed=ev.editions.find(e=>e.id===edId);
+  if(mode==='one') simulateOne(ed.bracket,ed.targetWins);
+  if(mode==='phase') simulatePhase(ed.bracket,ed.targetWins);
+  if(mode==='all') simulateAll(ed.bracket,ed.targetWins);
   save(); render();
 }
 
