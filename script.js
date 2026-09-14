@@ -4,14 +4,14 @@ function normalizeDB(d){
   if(!d) d={mcs:[],battles:[],national:{states:{},nacional:null}};
   d.mcs=d.mcs||[];
   d.battles=(d.battles||[]).map(b=>({
-    id:b.id,name:b.name,color:b.color||'#144fe0',color2:b.color2||'#e11d33',
+    id:b.id,name:b.name,color:b.color||'#144fe0',color2:b.color2||'#e11d33',color3:b.color3||'#22c55e',
     mcIds:b.mcIds||[],editions:b.editions||[],ranking:b.ranking||{},
     currentSeason:b.currentSeason||1, seasonHistory:b.seasonHistory||[],
     scoring:b.scoring||undefined,
     estado:b.estado||'', tipo:b.tipo||'mainstream'
   }));
   d.events=(d.events||[]).map(ev=>({
-    id:ev.id,name:ev.name,color:ev.color||'#144fe0',color2:ev.color2||'#e11d33',
+    id:ev.id,name:ev.name,color:ev.color||'#144fe0',color2:ev.color2||'#e11d33',color3:ev.color3||'#22c55e',
     mcIds:ev.mcIds||[],editions:ev.editions||[]
   }));
   d.national=d.national||{states:{},nacional:null};
@@ -19,9 +19,11 @@ function normalizeDB(d){
   if(d.national.classificationMode===undefined) d.national.classificationMode='campeao';
   if(d.national.classificationLocked===undefined) d.national.classificationLocked=false;
   d.nationalConfig=d.nationalConfig||{};
+  if(!d.nationalConfig.color3) d.nationalConfig.color3='#22c55e';
   d.liga=d.liga||{};
   d.liga.color=d.liga.color||'#2f6bff';
   d.liga.color2=d.liga.color2||'#ff2d4d';
+  d.liga.color3=d.liga.color3||'#22c55e';
   d.liga.seasonNumber=d.liga.seasonNumber||1;
   d.liga.seasonOffsets=d.liga.seasonOffsets||{};
   d.liga.seasonHistory=d.liga.seasonHistory||[];
@@ -30,7 +32,9 @@ function normalizeDB(d){
   d.fms=d.fms||{history:[],current:null};
   d.fms.color=d.fms.color||'#2f6bff';
   d.fms.color2=d.fms.color2||'#ff2d4d';
+  d.fms.color3=d.fms.color3||'#22c55e';
   d.fmsTitles=d.fmsTitles||[];
+  Object.values(d.national.states).forEach(sd=>{ if(sd.color && !sd.color3) sd.color3='#22c55e'; });
   backfillNationalTitles(d);
   return d;
 }
@@ -269,6 +273,7 @@ function toggleEditLiga(){ window.__editLiga=!window.__editLiga; render(); }
 function saveLigaColors(){
   db.liga.color=document.getElementById('editLigaColor1').value;
   db.liga.color2=document.getElementById('editLigaColor2').value;
+  db.liga.color3=document.getElementById('editLigaColor3').value;
   save(); window.__editLiga=false; render();
 }
 function finalizarTemporadaLiga(){
@@ -285,7 +290,7 @@ function finalizarTemporadaLiga(){
 window.__ligaTab='semanal';
 function switchLigaTab(tab){ window.__ligaTab=tab; render(); }
 function viewLiga(){
-  applyBattleTheme(db.liga.color,db.liga.color2);
+  applyBattleTheme(db.liga.color,db.liga.color2,db.liga.color3);
   const showEdit=!!window.__editLiga;
   const weekly=Object.entries(ligaWeeklyRanking()).sort((a,b)=>b[1]-a[1]);
   const season=Object.entries(ligaSeasonRanking()).sort((a,b)=>b[1]-a[1]);
@@ -298,9 +303,10 @@ function viewLiga(){
     <div class="card">
       <button class="btn secondary small" onclick="toggleEditLiga()">${showEdit?'Cancelar':'Editar Liga Central (cores)'}</button>
       ${showEdit?`<div style="margin-top:12px;">
-        <div class="grid2">
+        <div class="grid3">
           <div><label>Cor principal</label><input type="color" id="editLigaColor1" value="${db.liga.color}"></div>
           <div><label>Cor secundária</label><input type="color" id="editLigaColor2" value="${db.liga.color2}"></div>
+          <div><label>Cor complementar</label><input type="color" id="editLigaColor3" value="${db.liga.color3||'#22c55e'}"></div>
         </div>
         <button class="btn" onclick="saveLigaColors()">Salvar cores</button>
       </div>`:''}
@@ -323,19 +329,21 @@ function toggleEditFms(){ window.__editFms=!window.__editFms; render(); }
 function saveFmsColors(){
   db.fms.color=document.getElementById('editFmsColor1').value;
   db.fms.color2=document.getElementById('editFmsColor2').value;
+  db.fms.color3=document.getElementById('editFmsColor3').value;
   save(); window.__editFms=false; render();
 }
 function fmsNameFor(id){ return mcLink(id); }
 function viewFms(){
-  applyBattleTheme(db.fms.color,db.fms.color2);
+  applyBattleTheme(db.fms.color,db.fms.color2,db.fms.color3);
   const cur=db.fms.current;
   const showEdit=!!window.__editFms;
   const editBlock=`<div class="card">
     <button class="btn secondary small" onclick="toggleEditFms()">${showEdit?'Cancelar':'Editar FMS (cores)'}</button>
     ${showEdit?`<div style="margin-top:12px;">
-      <div class="grid2">
+      <div class="grid3">
         <div><label>Cor principal</label><input type="color" id="editFmsColor1" value="${db.fms.color}"></div>
         <div><label>Cor secundária</label><input type="color" id="editFmsColor2" value="${db.fms.color2}"></div>
+        <div><label>Cor complementar</label><input type="color" id="editFmsColor3" value="${db.fms.color3||'#22c55e'}"></div>
       </div>
       <button class="btn" onclick="saveFmsColors()">Salvar cores</button>
     </div>`:''}
@@ -371,7 +379,7 @@ function viewFms(){
   return `${topbar('FMS Brasil','Freestyle Master Series · Edição '+cur.edicao,'home')}<div class="content">${body}</div>`;
 }
 function viewFmsSeletiva(idx){
-  applyBattleTheme(db.fms.color,db.fms.color2);
+  applyBattleTheme(db.fms.color,db.fms.color2,db.fms.color3);
   const cur=db.fms.current;
   const sel=cur.seletivas.find(s=>s.idx===idx);
   let body='';
@@ -406,7 +414,7 @@ function fmsGroupBlock(groupKey,group){
   </div>`;
 }
 function viewFmsPrincipal(){
-  applyBattleTheme(db.fms.color,db.fms.color2);
+  applyBattleTheme(db.fms.color,db.fms.color2,db.fms.color3);
   const cur=db.fms.current;
   let body='';
   body+=fmsGroupBlock('A',cur.grupos.A);
@@ -584,6 +592,10 @@ function buildCardStyle(count,mcId){
   const borderColor=idx===7?'#a855f7':titleTierColor(count)[0];
   return `background-image:${bgImage}; ${sizePos} border-top-color:${borderColor};`;
 }
+function titleRowHtml(t){
+  const special=['Regional','Estadual','Nacional','FMS','Evento'].includes(t.type);
+  return `<div class="titlerow ${special?'titlerow-special':''}">${special?'⭐ ':''}<span class="badge ${special?'badge-special':''}">${t.type}</span> ${esc(t.label)}</div>`;
+}
 function ultimosCampeoes(battle,n){
   n=n||6;
   const list=[];
@@ -644,6 +656,9 @@ function collectTitles(mcId){
   db.battles.forEach(b=>{
     b.editions.forEach(ed=>{ if(editionChampionIds(ed).includes(mcId)) titles.push({type:'Edição',label:`Campeão - ${ed.name} (${b.name})`}); });
     (b.seasonHistory||[]).forEach(s=>{ if(s.championMcId===mcId) titles.push({type:'Temporada',label:`Temporada ${s.season} de Ranking - ${b.name}`}); });
+  });
+  (db.events||[]).forEach(ev=>{
+    ev.editions.forEach(ed=>{ if(editionChampionIds(ed).includes(mcId)) titles.push({type:'Evento',label:`Campeão - ${ed.name} (${ev.name})`}); });
   });
   (db.nationalTitles||[]).forEach(t=>{ if(t.mcId===mcId) titles.push({type:t.type,label:t.label}); });
   (db.fmsTitles||[]).forEach(t=>{ if(t.mcId===mcId) titles.push({type:'FMS',label:t.label}); });
@@ -874,6 +889,7 @@ function setDefaultTheme(){
   const root=document.documentElement.style;
   root.setProperty('--accent','#2f6bff');
   root.setProperty('--accent2','#ff2d4d');
+  root.setProperty('--accent3','#22c55e');
   root.setProperty('--bg','linear-gradient(160deg,#0a0d16,#10152a)');
   root.setProperty('--card','#151b2e');
   root.setProperty('--line','#262e47');
@@ -881,13 +897,17 @@ function setDefaultTheme(){
   root.setProperty('--topbar-bg','linear-gradient(120deg,#0b1330,#1450ff)');
   root.setProperty('--on-accent',contrastText('#2f6bff'));
   root.setProperty('--on-accent2',contrastText('#ff2d4d'));
+  root.setProperty('--on-accent3',contrastText('#22c55e'));
   root.setProperty('--accent-fg',boostForDark('#2f6bff'));
   root.setProperty('--accent2-fg',boostForDark('#ff2d4d'));
+  root.setProperty('--accent3-fg',boostForDark('#22c55e'));
 }
-function applyBattleTheme(c1,c2){
+function applyBattleTheme(c1,c2,c3){
+  c3=c3||'#22c55e';
   const root=document.documentElement.style;
   root.setProperty('--accent',c1);
   root.setProperty('--accent2',c2);
+  root.setProperty('--accent3',c3);
   root.setProperty('--bg',`linear-gradient(150deg,${c1},${lightenColor(c2,0.1)})`);
   root.setProperty('--card',`linear-gradient(135deg,${tintDark(c1,0.4)},${tintDark(c2,0.32)})`);
   root.setProperty('--line',lightenColor(c1,0.2));
@@ -895,8 +915,10 @@ function applyBattleTheme(c1,c2){
   root.setProperty('--topbar-bg',`linear-gradient(120deg,${c1},${c2})`);
   root.setProperty('--on-accent',contrastText(c1));
   root.setProperty('--on-accent2',contrastText(c2));
+  root.setProperty('--on-accent3',contrastText(c3));
   root.setProperty('--accent-fg',boostForDark(c1));
   root.setProperty('--accent2-fg',boostForDark(c2));
+  root.setProperty('--accent3-fg',boostForDark(c3));
 }
 function tintDark(hex,amt){
   hex=(hex||'#000').replace('#','');
@@ -1099,7 +1121,7 @@ function renderMcModal(){
       <div class="statbox"><b>${titles.length}</b><span>Títulos</span></div>
     </div>
     <h4>Títulos gerais (${titles.length})</h4>
-    <div class="titlelist">${titles.length?titles.map(t=>`<div class="titlerow"><span class="badge">${t.type}</span> ${esc(t.label)}</div>`).join(''):'<p class="muted">Nenhum título ainda.</p>'}</div>`;
+    <div class="titlelist">${titles.length?titles.map(t=>titleRowHtml(t)).join(''):'<p class="muted">Nenhum título ainda.</p>'}</div>`;
     cardStyle=buildCardStyle(titles.length,id);
   } else if(tab==='nacional'){
     const natMatches=collectNationalMatchesForMc(id);
@@ -1117,7 +1139,7 @@ function renderMcModal(){
       <div class="statbox"><b>${titEstadual}</b><span>Títulos de Estadual</span></div>
       <div class="statbox"><b>${titNacional}</b><span>Títulos de Nacional</span></div>
     </div>
-    <div class="titlelist">${natTitles.length?natTitles.map(t=>`<div class="titlerow"><span class="badge">${t.type}</span> ${esc(t.label)}</div>`).join(''):'<p class="muted">Nenhum título no Nacional ainda.</p>'}</div>`;
+    <div class="titlelist">${natTitles.length?natTitles.map(t=>titleRowHtml(t)).join(''):'<p class="muted">Nenhum título no Nacional ainda.</p>'}</div>`;
   } else if(tab==='fms'){
     const fs=fmsStatsForMc(id);
     body=`<div class="statgrid">
@@ -1185,6 +1207,7 @@ function toggleEditNacional(){ window.__editNacional=!window.__editNacional; ren
 function saveNacionalColors(){
   db.nationalConfig.color=document.getElementById('editNacColor1').value;
   db.nationalConfig.color2=document.getElementById('editNacColor2').value;
+  db.nationalConfig.color3=document.getElementById('editNacColor3').value;
   save(); window.__editNacional=false; render();
 }
 function setClassificationMode(mode){
@@ -1193,7 +1216,7 @@ function setClassificationMode(mode){
   save(); render();
 }
 function viewNacionalHome(){
-  if(db.nationalConfig.color) applyBattleTheme(db.nationalConfig.color,db.nationalConfig.color2);
+  if(db.nationalConfig.color) applyBattleTheme(db.nationalConfig.color,db.nationalConfig.color2,db.nationalConfig.color3);
   const estados=estadosDisponiveis();
   const rows=estados.map(e=>{
     const sd=getStateData(e);
@@ -1217,9 +1240,10 @@ function viewNacionalHome(){
     <div class="card">
       <button class="btn secondary small" onclick="toggleEditNacional()">${showEditNac?'Cancelar':'Editar Nacional (cores)'}</button>
       ${showEditNac?`<div style="margin-top:12px;">
-        <div class="grid2">
+        <div class="grid3">
           <div><label>Cor principal</label><input type="color" id="editNacColor1" value="${db.nationalConfig.color||'#2f6bff'}"></div>
           <div><label>Cor secundária</label><input type="color" id="editNacColor2" value="${db.nationalConfig.color2||'#ff2d4d'}"></div>
+          <div><label>Cor complementar</label><input type="color" id="editNacColor3" value="${db.nationalConfig.color3||'#22c55e'}"></div>
         </div>
         <button class="btn" onclick="saveNacionalColors()">Salvar cores</button>
       </div>`:''}
@@ -1262,20 +1286,22 @@ function saveEstadoColors(estado){
   const sd=getStateData(estado);
   sd.color=document.getElementById('editEstadoColor1').value;
   sd.color2=document.getElementById('editEstadoColor2').value;
+  sd.color3=document.getElementById('editEstadoColor3').value;
   save(); window.__editEstado[estado]=false; render();
 }
 function viewEstado(estado){
   const mcs=mcsByEstado(estado);
   const size=computeStateSize(mcs.length);
   const sd=getStateData(estado);
-  if(sd.color) applyBattleTheme(sd.color,sd.color2);
+  if(sd.color) applyBattleTheme(sd.color,sd.color2,sd.color3);
   const showEdit=!!window.__editEstado[estado];
   const editBlock=`<div class="card">
     <button class="btn secondary small" onclick="toggleEditEstado('${estado.replace(/'/g,"\\'")}')">${showEdit?'Cancelar':'Editar Estadual (cores)'}</button>
     ${showEdit?`<div style="margin-top:12px;">
-      <div class="grid2">
+      <div class="grid3">
         <div><label>Cor principal</label><input type="color" id="editEstadoColor1" value="${sd.color||'#2f6bff'}"></div>
         <div><label>Cor secundária</label><input type="color" id="editEstadoColor2" value="${sd.color2||'#ff2d4d'}"></div>
+        <div><label>Cor complementar</label><input type="color" id="editEstadoColor3" value="${sd.color3||'#22c55e'}"></div>
       </div>
       <button class="btn" onclick="saveEstadoColors('${estado.replace(/'/g,"\\'")}')">Salvar cores</button>
     </div>`:''}
@@ -1345,7 +1371,7 @@ function sortearEstadual(estado){
 /* ================= REGIONAL / ESTADUAL VIEWS ================= */
 function viewRegional(estado,idx){
   const sd=getStateData(estado);
-  if(sd.color) applyBattleTheme(sd.color,sd.color2);
+  if(sd.color) applyBattleTheme(sd.color,sd.color2,sd.color3);
   const reg=sd.regionals.find(r=>r.idx===idx);
   const html=renderBracketBlock(reg.bracket,2,'simRegional',[`'${estado.replace(/'/g,"\\'")}'`,idx]);
   return `${topbar('Regional '+idx,estado,'nacional/estado/'+encodeURIComponent(estado))}
@@ -1366,7 +1392,7 @@ function simRegional(estado,idx,mode){
 }
 function viewEstadual(estado){
   const sd=getStateData(estado);
-  if(sd.color) applyBattleTheme(sd.color,sd.color2);
+  if(sd.color) applyBattleTheme(sd.color,sd.color2,sd.color3);
   const html=renderBracketBlock(sd.estadualBracket,2,'simEstadual',[`'${estado.replace(/'/g,"\\'")}'`]);
   if(isBracketComplete(sd.estadualBracket) && !sd.estadualDone){
     sd.estadualChampionMcId=bracketChampion(sd.estadualBracket);
@@ -1428,7 +1454,7 @@ function iniciarNacional(){
   save(); nav('nacional/main');
 }
 function viewNacionalMain(){
-  if(db.nationalConfig.color) applyBattleTheme(db.nationalConfig.color,db.nationalConfig.color2);
+  if(db.nationalConfig.color) applyBattleTheme(db.nationalConfig.color,db.nationalConfig.color2,db.nationalConfig.color3);
   const nac=db.national.nacional;
   if(!nac) return `${topbar('Nacional','','nacional')}<div class="content"><p class="muted">Nacional ainda não iniciado.</p></div>`;
   let body='';
@@ -1475,11 +1501,12 @@ function simNacionalMain(mode){
 }
 
 /* ================= BRACKET RENDER ================= */
+function teamNameHtml(p){ return p.mcIds.map(mid=>mcLink(mid)).join(' & '); }
 function sideHTML(bracket,id,winnerId,done){
   if(!id) return `<div class="side"><span class="nm emptyslot">—</span></div>`;
   const p=bracket.participants[id];
   const isWin=done && winnerId===id;
-  const nameHtml = p ? (p.kind==='mc' ? mcLink(p.id,p.name) : esc(p.name)) : '?';
+  const nameHtml = p ? (p.kind==='mc' ? mcLink(p.id,p.name) : teamNameHtml(p)) : '?';
   return `<div class="side ${isWin?'win':''}"><span class="nm">${nameHtml}</span><span>${p?p.level:''}</span></div>`;
 }
 function matchHTML(bracket,m){
@@ -1496,7 +1523,7 @@ function renderBracketBlock(bracket,targetWins,fnName,args){
   const complete=isBracketComplete(bracket);
   const champ=complete?bracketChampion(bracket):null;
   return `<div class="brackets-scroll">${cols}</div>
-  ${complete?`<div class="badge">Campeão: ${bracket.participants[champ]?esc(bracket.participants[champ].name):''}</div>`:
+  ${complete?`<div class="badge">Campeão: ${bracket.participants[champ]?(bracket.participants[champ].kind==='mc'?mcLink(champ,bracket.participants[champ].name):teamNameHtml(bracket.participants[champ])):''}</div>`:
   `<div class="actionsrow">
     <button class="btn small" onclick="${call('one')}">Simular Batalha</button>
     <button class="btn small secondary" onclick="${call('phase')}">Simular Fase</button>
@@ -1534,9 +1561,10 @@ function viewBattles(){
       <button class="btn secondary small" onclick="toggleNewBattleForm()">${showNew?'Cancelar':'Criar Batalha'}</button>
       ${showNew?`<div style="margin-top:12px;">
       <label>Nome</label><input id="battlename" placeholder="Nome da batalha">
-      <div class="grid2">
+      <div class="grid3">
         <div><label>Cor principal</label><input type="color" id="battlecolor1" value="#144fe0"></div>
         <div><label>Cor secundária</label><input type="color" id="battlecolor2" value="#e11d33"></div>
+        <div><label>Cor complementar</label><input type="color" id="battlecolor3" value="#22c55e"></div>
       </div>
       <h4>Pontuação do ranking (opcional)</h4>
       <div class="grid2">
@@ -1558,6 +1586,7 @@ function createBattle(){
   const name=document.getElementById('battlename').value.trim();
   const color=document.getElementById('battlecolor1').value;
   const color2=document.getElementById('battlecolor2').value;
+  const color3=document.getElementById('battlecolor3').value;
   if(!name) return alert('Digite um nome.');
   const scoring={
     campeao:parseInt(document.getElementById('scCampeao').value)||9,
@@ -1566,7 +1595,7 @@ function createBattle(){
     quartas:parseInt(document.getElementById('scQuartas').value)||3,
     primeira:parseInt(document.getElementById('scPrimeira').value)||1
   };
-  db.battles.push({id:uid(),name,color,color2,mcIds:[],editions:[],ranking:{},currentSeason:1,seasonHistory:[],scoring});
+  db.battles.push({id:uid(),name,color,color2,color3,mcIds:[],editions:[],ranking:{},currentSeason:1,seasonHistory:[],scoring});
   save(); nav('battles');
 }
 
@@ -1583,6 +1612,7 @@ function saveBattleEdit(id){
   b.name=name;
   b.color=document.getElementById('editBattleColor1').value;
   b.color2=document.getElementById('editBattleColor2').value;
+  b.color3=document.getElementById('editBattleColor3').value;
   b.estado=document.getElementById('editBattleEstado').value.trim();
   b.tipo=document.getElementById('editBattleTipo').value;
   save(); window.__editBattle[id]=false; render();
@@ -1609,7 +1639,7 @@ function deleteBattle(id){
 function viewBattleDetail(id){
   const b=battleById(id); if(!b) return viewBattles();
   cleanupRanking(b); save();
-  applyBattleTheme(b.color,b.color2);
+  applyBattleTheme(b.color,b.color2,b.color3);
   const mcCheck=db.mcs.map(m=>`
     <label class="checkline"><input type="checkbox" id="chk_${m.id}" ${b.mcIds.includes(m.id)?'checked':''} onchange="toggleMc('${b.id}','${m.id}')"><span>${esc(m.name)} <span class="muted">(${esc(m.estado)} · ${m.nivel})</span></span></label>`).join('');
   const edFilter=window.__editionsFilter[b.id]||'all';
@@ -1622,7 +1652,7 @@ function viewBattleDetail(id){
   const titleRanking=Object.entries(titleCounts).sort((x,y)=>y[1]-x[1]);
   const titleRows=titleRanking.map((r,i)=>`<div class="rankrow"><div><span class="pos">${i+1}º</span> ${mcLink(r[0])}</div><b>${r[1]} título(s)</b></div>`).join('');
   const campeoes=ultimosCampeoes(b);
-  const campHtml=campeoes.length?campeoes.map(c=>`<div class="champrow"><span class="badge">${esc(c.edition)}</span> ${c.label.kind==='mc'?mcLink(c.label.ids[0],c.label.name):esc(c.label.name)}</div>`).join(''):'<p class="muted">Nenhuma edição concluída ainda.</p>';
+  const campHtml=campeoes.length?campeoes.map(c=>`<div class="champrow"><span class="badge">${esc(c.edition)}</span> ${c.label.kind==='mc'?mcLink(c.label.ids[0],c.label.name):c.label.ids.map(mid=>mcLink(mid)).join(' & ')}</div>`).join(''):'<p class="muted">Nenhuma edição concluída ainda.</p>';
   const canCreateEdition=b.mcIds.length>=8;
   const showParts=!!window.__showParticipants[b.id];
   const showEdit=!!window.__editBattle[b.id];
@@ -1635,9 +1665,10 @@ function viewBattleDetail(id){
       </div>
       ${showEdit?`<div style="margin-top:12px;">
         <label>Nome</label><input id="editBattleName" value="${esc(b.name)}">
-        <div class="grid2">
+        <div class="grid3">
           <div><label>Cor principal</label><input type="color" id="editBattleColor1" value="${b.color}"></div>
           <div><label>Cor secundária</label><input type="color" id="editBattleColor2" value="${b.color2}"></div>
+          <div><label>Cor complementar</label><input type="color" id="editBattleColor3" value="${b.color3||'#22c55e'}"></div>
         </div>
         <div class="grid2">
           <div><label>Estado</label><input id="editBattleEstado" placeholder="Ex: SP" value="${esc(b.estado||'')}"></div>
@@ -1704,7 +1735,7 @@ function finalizarTemporada(battleId){
 /* ================= NEW EDITION ================= */
 function viewNewEdition(battleId){
   const b=battleById(battleId); if(!b) return viewBattles();
-  applyBattleTheme(b.color,b.color2);
+  applyBattleTheme(b.color,b.color2,b.color3);
   return `${topbar('Nova Edição',b.name,'battle/'+b.id)}
   <div class="content">
     <div class="card">
@@ -1793,7 +1824,7 @@ function createEdition(battleId){
 function viewEdition(battleId,edId){
   const b=battleById(battleId); if(!b) return viewBattles();
   const ed=b.editions.find(e=>e.id===edId); if(!ed) return viewBattleDetail(battleId);
-  applyBattleTheme(b.color,b.color2);
+  applyBattleTheme(b.color,b.color2,b.color3);
   applyRankingIfNeeded(b,ed);
   const html=renderBracketBlock(ed.bracket,ed.targetWins,'simEdition',[`'${battleId}'`,`'${edId}'`]);
   return `${topbar(ed.name,ed.formatLabel,'battle/'+battleId)}
@@ -1820,7 +1851,8 @@ function createSpecialEvent(){
   if(!name) return alert('Digite um nome.');
   const color=document.getElementById('eventcolor1').value;
   const color2=document.getElementById('eventcolor2').value;
-  db.events.push({id:uid(),name,color,color2,mcIds:[],editions:[]});
+  const color3=document.getElementById('eventcolor3').value;
+  db.events.push({id:uid(),name,color,color2,color3,mcIds:[],editions:[]});
   save(); window.__showNewEventForm=false; nav('events');
 }
 function saveEventEdit(id){
@@ -1830,6 +1862,7 @@ function saveEventEdit(id){
   ev.name=name;
   ev.color=document.getElementById('editEventColor1').value;
   ev.color2=document.getElementById('editEventColor2').value;
+  ev.color3=document.getElementById('editEventColor3').value;
   save(); window.__editEvent[id]=false; render();
 }
 function deleteEvent(id){
@@ -1859,9 +1892,10 @@ function viewEvents(){
       <button class="btn secondary small" onclick="toggleNewEventForm()">${showNew?'Cancelar':'Criar Evento'}</button>
       ${showNew?`<div style="margin-top:12px;">
         <label>Nome</label><input id="eventname" placeholder="Nome do evento">
-        <div class="grid2">
+        <div class="grid3">
           <div><label>Cor principal</label><input type="color" id="eventcolor1" value="#144fe0"></div>
           <div><label>Cor secundária</label><input type="color" id="eventcolor2" value="#e11d33"></div>
+          <div><label>Cor complementar</label><input type="color" id="eventcolor3" value="#22c55e"></div>
         </div>
         <button class="btn" onclick="createSpecialEvent()">Criar Evento</button>
       </div>`:''}
@@ -1871,7 +1905,7 @@ function viewEvents(){
 }
 function viewEventDetail(id){
   const ev=eventById(id); if(!ev) return viewEvents();
-  applyBattleTheme(ev.color,ev.color2);
+  applyBattleTheme(ev.color,ev.color2,ev.color3);
   const showEdit=!!window.__editEvent[id];
   const showParts=!!window.__showParticipantsEv[id];
   const mcCheck=db.mcs.map(m=>`
@@ -1888,9 +1922,10 @@ function viewEventDetail(id){
       </div>
       ${showEdit?`<div style="margin-top:12px;">
         <label>Nome</label><input id="editEventName" value="${esc(ev.name)}">
-        <div class="grid2">
+        <div class="grid3">
           <div><label>Cor principal</label><input type="color" id="editEventColor1" value="${ev.color}"></div>
           <div><label>Cor secundária</label><input type="color" id="editEventColor2" value="${ev.color2}"></div>
+          <div><label>Cor complementar</label><input type="color" id="editEventColor3" value="${ev.color3||'#22c55e'}"></div>
         </div>
         <button class="btn" onclick="saveEventEdit('${ev.id}')">Salvar Evento</button>
       </div>`:''}
@@ -1909,7 +1944,7 @@ function viewEventDetail(id){
 }
 function viewNewEventEdition(eventId){
   const ev=eventById(eventId); if(!ev) return viewEvents();
-  applyBattleTheme(ev.color,ev.color2);
+  applyBattleTheme(ev.color,ev.color2,ev.color3);
   return `${topbar('Nova Edição',ev.name,'event/'+ev.id)}
   <div class="content">
     <div class="card">
@@ -1978,7 +2013,7 @@ function createEventEdition(eventId){
 function viewEventEdition(eventId,edId){
   const ev=eventById(eventId); if(!ev) return viewEvents();
   const ed=ev.editions.find(e=>e.id===edId); if(!ed) return viewEventDetail(eventId);
-  applyBattleTheme(ev.color,ev.color2);
+  applyBattleTheme(ev.color,ev.color2,ev.color3);
   const html=renderBracketBlock(ed.bracket,ed.targetWins,'simEventEdition',[`'${eventId}'`,`'${edId}'`]);
   return `${topbar(ed.name,ed.formatLabel,'event/'+eventId)}
   <div class="content"><div class="card">${html}</div></div>`;
