@@ -1,6 +1,7 @@
 :root{
   --accent:#2f6bff;
   --accent2:#ff2d4d;
+  --accent3:#22c55e;
   --bg:linear-gradient(160deg,#0a0d16,#10152a);
   --card:#151b2e;
   --text:#eef2fb;
@@ -35,6 +36,7 @@ p{margin:4px 0;}
 
 .list-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(300px,1fr));gap:16px;margin-bottom:16px;}
 .grid2{display:grid;grid-template-columns:1fr 1fr;gap:14px;}
+.grid3{display:grid;grid-template-columns:1fr 1fr 1fr;gap:10px;}
 
 .btn{display:inline-block;width:auto;min-width:180px;text-align:center;background:var(--accent);color:var(--on-accent);border:none;border-radius:999px;padding:12px 22px;font-weight:800;font-size:14px;letter-spacing:.3px;cursor:pointer;margin-top:10px;box-shadow:0 3px 10px rgba(20,79,224,.25);}
 .btn:hover{filter:brightness(1.1);}
@@ -62,7 +64,7 @@ label{font-size:12px;color:var(--muted);font-weight:700;text-transform:uppercase
 .lvl{font-weight:900;font-size:16px;color:var(--accent-fg);}
 .muted{color:var(--muted);font-size:12px;}
 
-.mclink{color:var(--accent-fg);font-weight:700;cursor:pointer;}
+.mclink{color:var(--accent3-fg);font-weight:700;cursor:pointer;}
 .mclink:hover{text-decoration:underline;}
 
 .brackets-scroll{display:flex;gap:20px;overflow-x:auto;padding-bottom:14px;}
@@ -83,7 +85,7 @@ label{font-size:12px;color:var(--muted);font-weight:700;text-transform:uppercase
 .checkline:last-child{border-bottom:none;}
 .checkline input{width:auto;margin:0;}
 
-.badge{font-size:11px;background:var(--accent2);color:var(--on-accent2);border-radius:6px;padding:3px 10px;font-weight:800;display:inline-block;}
+.badge{font-size:11px;background:var(--accent3);color:var(--on-accent3);border-radius:6px;padding:3px 10px;font-weight:800;display:inline-block;}
 
 .rankrow{display:flex;justify-content:space-between;padding:9px 0;border-bottom:1px solid var(--line);}
 .rankrow:first-child .pos{color:var(--accent2-fg);}
@@ -113,6 +115,8 @@ label{font-size:12px;color:var(--muted);font-weight:700;text-transform:uppercase
 .titlelist{max-height:160px;overflow-y:auto;}
 .titlerow{padding:6px 0;border-bottom:1px solid var(--line);font-size:13px;display:flex;align-items:center;gap:8px;}
 .titlerow:last-child{border-bottom:none;}
+.titlerow-special{background:rgba(255,255,255,.08);border-radius:8px;padding:6px 8px;border-bottom:none;margin-bottom:4px;font-weight:700;}
+.badge-special{background:linear-gradient(120deg,#eab308,#f59e0b);}
 
 /* celebração de campeão */
 .celebOverlay{position:fixed;inset:0;background:rgba(5,8,16,.72);display:flex;align-items:center;justify-content:center;z-index:80;padding:20px;animation:celebFadeIn .25s ease;}
