@@ -88,7 +88,7 @@ function eventById(id){return db.events.find(e=>e.id===id);}
 
 function calcProb(la,lb){
   const diff=la-lb;
-  let p=0.5+0.5*Math.tanh(diff/38);
+  let p=0.5+0.5*Math.tanh(diff/20);
   return Math.min(0.95,Math.max(0.05,p));
 }
 function simulateBestOf(target,pA){
