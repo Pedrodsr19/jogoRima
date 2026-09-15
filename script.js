@@ -812,7 +812,7 @@ function simFmsFinal(){
   cur.championMcId=m.winner;
   cur.phase='done';
   db.fmsTitles.push({mcId:m.winner,edicao:cur.edicao,label:`Campeão FMS - Edição ${cur.edicao}`});
-  celebrateChampion(mcName(m.winner),'Campeão FMS - Edição '+cur.edicao, db.fms.color, db.fms.color2);
+  celebrateChampion(mcName(m.winner),'Campeão FMS - Edição '+cur.edicao, db.fms.color, db.fms.color2, m.winner);
   save(); render();
 }
 function novaFMS(){
@@ -1040,18 +1040,27 @@ function viewMcs(){
       <label>Nome</label><input id="mcname" placeholder="Nome do MC">
       <label>Estado</label><input id="mcestado" placeholder="Ex: SP">
       <label>Nível (0-100)</label><input id="mcnivel" type="number" min="0" max="100" placeholder="0 a 100">
+      <label>Foto (URL, opcional)</label><input id="mcfoto" placeholder="https://...">
+      <label>ou enviar arquivo</label><input id="mcfotofile" type="file" accept="image/*" onchange="handleMcPhotoFile(this,'mcfoto')">
       <button class="btn" onclick="addMc()">Cadastrar MC</button>
     </div>
     <div class="card mclist"><h3>MCs cadastrados</h3>${rows||'<p class="muted">Nenhum MC cadastrado.</p>'}</div>
   </div>`;
 }
+function handleMcPhotoFile(input,targetId){
+  const file=input.files[0]; if(!file) return;
+  const reader=new FileReader();
+  reader.onload=e=>{ document.getElementById(targetId).value=e.target.result; };
+  reader.readAsDataURL(file);
+}
 function addMc(){
   const name=document.getElementById('mcname').value.trim();
   const estado=document.getElementById('mcestado').value.trim();
   let nivel=parseInt(document.getElementById('mcnivel').value);
+  const foto=document.getElementById('mcfoto').value.trim();
   if(!name||!estado||isNaN(nivel)) return alert('Preencha nome, estado e nível.');
   nivel=Math.max(0,Math.min(100,nivel));
-  db.mcs.push({id:uid(),name,estado,nivel});
+  db.mcs.push({id:uid(),name,estado,nivel,foto});
   save(); render();
 }
 function delMc(id){
@@ -1076,9 +1085,10 @@ window.__modalMcId=null; window.__modalTab='geral';
 function openMcModal(id){ if(!mcExists(id)) return; window.__modalMcId=id; window.__modalTab='geral'; renderMcModal(); }
 function closeMcModal(){ document.getElementById('modalRoot').innerHTML=''; window.__modalMcId=null; }
 function closeCelebration(){ const r=document.getElementById('celebrationRoot'); if(r) r.innerHTML=''; }
-function celebrateChampion(name,label,c1,c2){
+function celebrateChampion(name,label,c1,c2,mcId){
   const root=document.getElementById('celebrationRoot'); if(!root) return;
   c1=c1||'#2f6bff'; c2=c2||'#ff2d4d';
+  const m=mcId?mcById(mcId):null;
   const colors=[c1,c2,'#ffffff',lightenColor(c1,0.4),lightenColor(c2,0.4)];
   let confetti='';
   for(let i=0;i<26;i++){
@@ -1089,10 +1099,12 @@ function celebrateChampion(name,label,c1,c2){
     const color=colors[i%colors.length];
     confetti+=`<span class="celebConfettiPiece" style="left:${left}%;width:${size}px;height:${size*1.6}px;background:${color};animation-delay:${delay}s;animation-duration:${dur}s;"></span>`;
   }
+  const photoHtml=(m&&m.foto)?`<img src="${esc(m.foto)}" class="celebPhoto" onerror="this.style.display='none';document.getElementById('celebTrophyFallback').style.display='block';">`:'';
   root.innerHTML=`<div class="celebOverlay" onclick="if(event.target===this)closeCelebration()">
     <div class="celebCard" style="background:linear-gradient(150deg,${c1},${c2});">
       ${confetti}
-      <div class="celebTrophy">🏆</div>
+      ${photoHtml}
+      <div class="celebTrophy" id="celebTrophyFallback" style="${photoHtml?'display:none;':''}">🏆</div>
       <div class="celebLabel">${esc(label)}</div>
       <h1 class="celebName">${esc(name)}</h1>
       <button class="btn secondary" style="background:rgba(255,255,255,.15);color:#fff;border-color:rgba(255,255,255,.6);" onclick="closeCelebration()">Fechar</button>
@@ -1176,7 +1188,7 @@ function renderMcModal(){
     mcBattles.map(bt=>`<div class="mtab ${tab===bt.id?'active':''}" onclick="switchModalTab('${bt.id}')">${esc(bt.name)}</div>`).join('');
   root.innerHTML=`<div class="modalOverlay" onclick="if(event.target===this)closeMcModal()">
     <div class="modalCard" style="${cardStyle}">
-      <div class="modalHead"><h2>${esc(m.name)}</h2><span class="modalClose" onclick="closeMcModal()">✕</span></div>
+      <div class="modalHead">${m.foto?`<img src="${esc(m.foto)}" class="mcAvatar" onerror="this.style.display='none'">`:''}<h2>${esc(m.name)}</h2><span class="modalClose" onclick="closeMcModal()">✕</span></div>
       <div class="muted" style="margin-bottom:12px;">${esc(m.estado)} · Nível ${m.nivel}</div>
       <div class="modalTabs">${tabsHtml}</div>
       ${body}
@@ -1187,6 +1199,8 @@ function renderMcModal(){
           <div><label>Estado</label><input id="editMcEstado" value="${esc(m.estado)}"></div>
           <div><label>Nível (0-100)</label><input id="editMcNivel" type="number" min="0" max="100" value="${m.nivel}"></div>
         </div>
+        <label>Foto (URL)</label><input id="editMcFoto" value="${esc(m.foto||'')}" placeholder="https://...">
+        <label>ou enviar arquivo</label><input type="file" accept="image/*" onchange="handleMcPhotoFile(this,'editMcFoto')">
         <button class="btn" onclick="saveMcEdit('${id}')">Salvar alterações</button>
       </div>
     </div>
@@ -1199,6 +1213,7 @@ function saveMcEdit(id){
   let nivel=parseInt(document.getElementById('editMcNivel').value);
   if(!name||!estado||isNaN(nivel)) return alert('Preencha nome, estado e nível.');
   m.name=name; m.estado=estado; m.nivel=Math.max(0,Math.min(100,nivel));
+  m.foto=document.getElementById('editMcFoto').value.trim();
   save(); renderMcModal(); render();
 }
 
@@ -1401,7 +1416,7 @@ function viewEstadual(estado){
     if(!sd.estadualTitleLogged){
       sd.estadualTitleLogged=true;
       db.nationalTitles.push({mcId:sd.estadualChampionMcId,type:'Estadual',label:`Campeão Estadual - ${estado}`});
-      celebrateChampion(mcName(sd.estadualChampionMcId),'Campeão Estadual - '+estado, sd.color||'#2f6bff', sd.color2||'#ff2d4d');
+      celebrateChampion(mcName(sd.estadualChampionMcId),'Campeão Estadual - '+estado, sd.color||'#2f6bff', sd.color2||'#ff2d4d', sd.estadualChampionMcId);
     }
     save();
   }
@@ -1470,7 +1485,7 @@ function viewNacionalMain(){
       if(!nac.titleLogged){
         nac.titleLogged=true;
         db.nationalTitles.push({mcId:nac.championMcId,type:'Nacional',label:'Campeão Nacional'});
-        celebrateChampion(mcName(nac.championMcId),'Campeão Nacional', db.nationalConfig.color||'#2f6bff', db.nationalConfig.color2||'#ff2d4d');
+        celebrateChampion(mcName(nac.championMcId),'Campeão Nacional', db.nationalConfig.color||'#2f6bff', db.nationalConfig.color2||'#ff2d4d', nac.championMcId);
       }
       save();
     }
@@ -2033,7 +2048,7 @@ function simEventEdition(eventId,edId,mode){
     ed.celebrated=true;
     const champ=bracketChampion(ed.bracket);
     const p=ed.bracket.participants[champ];
-    if(p) celebrateChampion(p.name,'Campeão - '+ed.name+' ('+ev.name+')', ev.color, ev.color2);
+    if(p) celebrateChampion(p.name,'Campeão - '+ed.name+' ('+ev.name+')', ev.color, ev.color2, p.kind==='mc'?p.id:null);
   }
   save(); render();
 }
