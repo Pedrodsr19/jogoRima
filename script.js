@@ -394,8 +394,9 @@ function viewFmsSeletiva(idx){
 }
 function fmsMatchRow(m){
   const done=m.done;
-  const side=(id,other,score,otherScore)=>`<div class="side ${done&&m.winner===id?'win':''}"><span class="nm">${mcLink(id)}</span><span>${done?score:''}</span></div>`;
-  return `<div class="match ${done?'done':''}">${side(m.a,m.b,m.scoreA,m.scoreB)}${side(m.b,m.a,m.scoreB,m.scoreA)}</div>`;
+  const side=(id,score)=>`<div class="side ${done&&m.winner===id?'win':''}"><div class="side-names"><span class="nm">${mcLink(id)}</span></div>${done?`<span class="side-level">${score}</span>`:''}</div>`;
+  const mid=done?`<div class="vs-score">${m.scoreA} × ${m.scoreB}</div>`:`<div class="vs-score vs-pending">VS</div>`;
+  return `<div class="match ${done?'done':''}">${side(m.a,m.scoreA)}${mid}${side(m.b,m.scoreB)}</div>`;
 }
 function fmsGroupBlock(groupKey,group){
   const standings=fmsStandings(group);
@@ -1502,15 +1503,20 @@ function simNacionalMain(mode){
 
 /* ================= BRACKET RENDER ================= */
 function teamNameHtml(p){ return p.mcIds.map(mid=>mcLink(mid)).join(' & '); }
-function sideHTML(bracket,id,winnerId,done){
-  if(!id) return `<div class="side"><span class="nm emptyslot">—</span></div>`;
+function sideNamesHtml(bracket,id){
+  if(!id) return `<span class="nm emptyslot">—</span>`;
   const p=bracket.participants[id];
+  if(!p) return `<span class="nm">?</span>`;
+  if(p.kind==='mc') return `<span class="nm">${mcLink(p.id,p.name)}</span>`;
+  return p.mcIds.map(mid=>`<span class="nm">${mcLink(mid)}</span>`).join('');
+}
+function sideHTML(bracket,id,winnerId,done){
+  const p=id?bracket.participants[id]:null;
   const isWin=done && winnerId===id;
-  const nameHtml = p ? (p.kind==='mc' ? mcLink(p.id,p.name) : teamNameHtml(p)) : '?';
-  return `<div class="side ${isWin?'win':''}"><span class="nm">${nameHtml}</span><span>${p?p.level:''}</span></div>`;
+  return `<div class="side ${isWin?'win':''}"><div class="side-names">${sideNamesHtml(bracket,id)}</div>${p?`<span class="side-level">${p.level}</span>`:''}</div>`;
 }
 function matchHTML(bracket,m){
-  const scoreTxt=m.done?`<div class="muted" style="text-align:center;">${m.scoreA} x ${m.scoreB}</div>`:'';
+  const scoreTxt=m.done?`<div class="vs-score">${m.scoreA} × ${m.scoreB}</div>`:`<div class="vs-score vs-pending">VS</div>`;
   return `<div class="match ${m.done?'done':''}">${sideHTML(bracket,m.a,m.winner,m.done)}${scoreTxt}${sideHTML(bracket,m.b,m.winner,m.done)}</div>`;
 }
 function renderBracketBlock(bracket,targetWins,fnName,args){
