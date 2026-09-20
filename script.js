@@ -39,7 +39,7 @@ function normalizeDB(d){
     id:c.id,mcId:c.mcId,temporada:c.temporada||1,semana:c.semana||1,
     energyUsed:c.energyUsed||0,ligaBoost:c.ligaBoost||{value:0,weeksLeft:0},
     weekBattleStatus:c.weekBattleStatus||{},pendingInvites:c.pendingInvites||[],
-    nationalSeason:c.nationalSeason||{regionalTries:0,wentRegional:false,wentEstadual:false,lockedOut:false,invitedTop80:false,responded80:false}
+    battleData:c.battleData||{},nat:c.nat||null,_weekReady:false
   }));
   backfillNationalTitles(d);
   return d;
@@ -137,6 +137,7 @@ function esc(s){return (s||'').replace(/&/g,'&amp;').replace(/</g,'&lt;').replac
 function estadosDisponiveis(){return [...new Set(db.mcs.map(m=>m.estado))].sort();}
 function mcsByEstado(estado){return db.mcs.filter(m=>m.estado===estado);}
 function mcLink(id,nameFallback){
+  if(window.__inCareer && id!==window.__inCareer.mcId) return esc(mcExists(id)?mcName(id):(nameFallback||''));
   if(mcExists(id)) return `<span class="mclink" onclick="openMcModal('${id}')">${esc(mcName(id))}</span>`;
   return esc(nameFallback||'');
 }
@@ -1032,6 +1033,7 @@ function render(){
   const root=document.getElementById('app');
   const r=parts();
   let html='';
+  window.__inCareer=null;
   setDefaultTheme();
   if(r[0]==='home') html=viewHome();
   else if(r[0]==='mcs') html=viewMcs();
@@ -1053,6 +1055,10 @@ function render(){
   else if(r[0]==='career' && r[1]==='create') html=viewCareerCreate();
   else if(r[0]==='career' && r[1]==='dash') html=viewCareerDashboard(r[2]);
   else if(r[0]==='career' && r[1]==='battle') html=viewCareerBattle(r[2],r[3]);
+  else if(r[0]==='career' && r[1]==='edition') html=viewCareerEdition(r[2],r[3],r[4]);
+  else if(r[0]==='career' && r[1]==='nacional') html=viewCareerNacional(r[2]);
+  else if(r[0]==='career' && r[1]==='regional') html=viewCareerRegional(r[2],parseInt(r[3]));
+  else if(r[0]==='career' && r[1]==='mc') html=viewCareerMc(r[2]);
   else if(r[0]==='battle' && r[1] && !r[2]) html=viewBattleDetail(r[1]);
   else if(r[0]==='battle' && r[1]==='newedition') html=viewNewEdition(r[2]);
   else if(r[0]==='edition') html=viewEdition(r[1],r[2]);
@@ -2227,42 +2233,85 @@ function simEventEdition(eventId,edId,mode){
   save(); render();
 }
 
-/* ================= CAREER MODE ================= */
+/* ================= CAREER MODE (isolado do simulador normal) ================= */
 const CAREER_FMT_WEIGHTS=[['solo',70],['dupla',20],['trio',7],['quarteto',3]];
 function pickCareerFormat(){ const r=Math.random()*100; let acc=0; for(const [f,w] of CAREER_FMT_WEIGHTS){ acc+=w; if(r<acc) return f; } return 'solo'; }
 function energyPenaltyFor(used){ if(used>90) return 10; if(used>=90) return 7; if(used>=75) return 4; if(used>=65) return 2; return 0; }
 function careerById(id){ return db.careers.find(c=>c.id===id); }
-function careerTitleCount(car){ return collectTitles(car.mcId).length; }
+
+/* ---- estatísticas isoladas da carreira (não usa collectTitles/collectMatchesForMc globais) ---- */
+function careerScanMatches(bracket,mcId,out){
+  if(!bracket) return;
+  bracket.rounds.forEach(round=>round.forEach(m=>{
+    if(!m.done) return;
+    const pa=bracket.participants[m.a], pb=bracket.participants[m.b];
+    const ina=pa&&(pa.kind==='team'?pa.mcIds.includes(mcId):pa.id===mcId);
+    const inb=pb&&(pb.kind==='team'?pb.mcIds.includes(mcId):pb.id===mcId);
+    if(ina||inb) out.push({won:(ina&&m.winner===m.a)||(inb&&m.winner===m.b)});
+  }));
+}
+function careerCollectMatches(car){
+  const out=[];
+  Object.values(car.battleData).forEach(bd=>bd.editions.forEach(ed=>careerScanMatches(ed.bracket,car.mcId,out)));
+  const nat=car.nat;
+  if(nat){ (nat.regionals||[]).forEach(r=>careerScanMatches(r.bracket,car.mcId,out)); careerScanMatches(nat.estadualBracket,car.mcId,out); careerScanMatches(nat.nacionalBracket,car.mcId,out); }
+  return out;
+}
+function careerCollectTitles(car){
+  const titles=[];
+  Object.entries(car.battleData).forEach(([bid,bd])=>{
+    const rb=battleById(bid);
+    bd.editions.forEach(ed=>{ if(isBracketComplete(ed.bracket)&&editionChampionIds(ed).includes(car.mcId)) titles.push({type:'Edição',label:'Campeão - '+ed.name+' ('+(rb?rb.name:'Batalha')+')'}); });
+  });
+  const nat=car.nat;
+  if(nat){
+    (nat.regionals||[]).forEach((r,i)=>{ if(isBracketComplete(r.bracket)&&bracketChampion(r.bracket)===car.mcId) titles.push({type:'Regional',label:'Campeão Regional '+(i+1)}); });
+    if(nat.estadualBracket&&isBracketComplete(nat.estadualBracket)&&bracketChampion(nat.estadualBracket)===car.mcId) titles.push({type:'Estadual',label:'Campeão Estadual'});
+    if(nat.nacionalBracket&&isBracketComplete(nat.nacionalBracket)&&bracketChampion(nat.nacionalBracket)===car.mcId) titles.push({type:'Nacional',label:'Campeão Nacional'});
+  }
+  return titles;
+}
+function careerTitleCount(car){ return careerCollectTitles(car).length; }
 function careerBaseLevel(car){ const t=careerTitleCount(car); if(t>=35)return 90; if(t>=25)return 85; if(t>=15)return 80; if(t>=10)return 75; if(t>=5)return 70; return 65; }
 function recomputeCareerLevel(car){
   const m=mcById(car.mcId); if(!m) return;
   let lvl=careerBaseLevel(car);
   if(car.ligaBoost && car.ligaBoost.weeksLeft>0) lvl+=car.ligaBoost.value;
-  lvl-=energyPenaltyFor(car.energyUsed);
+  lvl-=energyPenaltyFor(car.energyUsed||0);
   m.nivel=Math.max(0,Math.min(100,lvl));
 }
-function battleAvgLevel(b){ const mcs=b.mcIds.map(mcById).filter(Boolean); return mcs.length?mcs.reduce((s,mm)=>s+mm.nivel,0)/mcs.length:0; }
-function isTop8(b,mcId){ const order=Object.entries(b.ranking).sort((x,y)=>y[1]-x[1]).slice(0,8).map(x=>x[0]); return order.includes(mcId); }
-function careerBattleEnergyCost(b,car){ const m=mcById(car.mcId); return (m&&b.estado&&m.estado===b.estado)?15:25; }
-function weekBattlesList(){ return db.battles; }
+
+/* ---- visão somente-leitura de uma batalha real, com estado isolado da carreira ---- */
+function careerBattleView(car,realBattleId){
+  const rb=battleById(realBattleId); if(!rb) return null;
+  if(!car.battleData[realBattleId]) car.battleData[realBattleId]={ranking:{},editions:[]};
+  const bd=car.battleData[realBattleId];
+  const mcIds=rb.mcIds.includes(car.mcId)?rb.mcIds:[...rb.mcIds,car.mcId];
+  return {id:rb.id,name:rb.name,color:rb.color,color2:rb.color2,color3:rb.color3,estado:rb.estado,tipo:rb.tipo,mcIds,scoring:rb.scoring,ranking:bd.ranking,editions:bd.editions};
+}
+function battleAvgLevel(bv){ const mcs=bv.mcIds.map(mcById).filter(Boolean); return mcs.length?mcs.reduce((s,mm)=>s+mm.nivel,0)/mcs.length:0; }
+function isTop8(bv,mcId){ const order=Object.entries(bv.ranking).sort((x,y)=>y[1]-x[1]).slice(0,8).map(x=>x[0]); return order.includes(mcId); }
+function careerBattleEnergyCost(estado,car){ const m=mcById(car.mcId); return (m&&estado&&m.estado===estado)?15:25; }
+
 function ensureWeekSetup(car){
   if(car._weekReady) return;
   const invites=[];
   db.battles.forEach(b=>{
     if(!car.weekBattleStatus[b.id]){
+      const bv=careerBattleView(car,b.id);
       const fmt=pickCareerFormat();
       let confirmed=false, via=null;
-      if(isTop8(b,car.mcId)){ confirmed=true; via='ranking'; }
+      if(isTop8(bv,car.mcId)){ confirmed=true; via='ranking'; }
       car.weekBattleStatus[b.id]={format:fmt,confirmed,via,editionId:null,resolved:false};
       if(!confirmed){
-        const m=mcById(car.mcId), avg=battleAvgLevel(b);
+        const m=mcById(car.mcId), avg=battleAvgLevel(bv);
         if(m && m.nivel>avg){
           const diff=m.nivel-avg;
           const chance=diff>=5?0.65:0.4;
           if(Math.random()<chance) invites.push({type:'battle',battleId:b.id});
         }
         if(fmt!=='solo'){
-          const matches=collectMatchesForMc(car.mcId);
+          const matches=careerCollectMatches(car);
           if(matches.length>=4){
             const wr=matches.filter(x=>x.won).length/matches.length;
             if(wr>=0.5 && Math.random()<0.5) invites.push({type:'mc',battleId:b.id,format:fmt});
@@ -2271,33 +2320,30 @@ function ensureWeekSetup(car){
       }
     }
   });
-  car.pendingInvites=car.pendingInvites.concat(invites);
+  car.pendingInvites=(car.pendingInvites||[]).concat(invites);
   car._weekReady=true;
 }
 function respondInvite(careerId,idx,accept){
-  const car=careerById(careerId); const inv=car.pendingInvites[idx]; if(!inv) return;
-  if(accept){
-    const st=car.weekBattleStatus[inv.battleId];
-    if(st){ st.confirmed=true; st.via=inv.type==='battle'?'convite_batalha':'convite_mc'; }
-  }
+  const car=careerById(careerId); if(!car) return; const inv=car.pendingInvites[idx]; if(!inv) return;
+  if(accept){ const st=car.weekBattleStatus[inv.battleId]; if(st){ st.confirmed=true; st.via=inv.type==='battle'?'convite_batalha':'convite_mc'; } }
   car.pendingInvites.splice(idx,1);
   save(); render();
 }
-function runWeeklyEdition(b,format,mcId,forceInclude){
+function runWeeklyEdition(bv,format,mcId,forceInclude){
   let teamSize=format==='solo'?1:format==='dupla'?2:format==='trio'?3:4;
   let targetWins=(format==='solo'||format==='dupla')?2:3;
   const sizeOptions=format==='solo'?[8,16,32]:[4,8,16];
-  const maxCap=format==='solo'?b.mcIds.length:Math.floor(b.mcIds.length/teamSize);
+  const maxCap=format==='solo'?bv.mcIds.length:Math.floor(bv.mcIds.length/teamSize);
   const validSizes=sizeOptions.filter(s=>s<=maxCap);
   if(!validSizes.length) return null;
   const size=validSizes[validSizes.length-1];
   const needed=size*teamSize;
   let pool, included=false;
-  if(forceInclude && b.mcIds.includes(mcId)){
-    const rest=weightedDraft({mcIds:b.mcIds.filter(id=>id!==mcId),ranking:b.ranking},needed-1);
+  if(forceInclude && bv.mcIds.includes(mcId)){
+    const rest=weightedDraft({mcIds:bv.mcIds.filter(id=>id!==mcId),ranking:bv.ranking},needed-1);
     pool=[mcId,...rest]; included=true;
   } else {
-    pool=weightedDraft(b,needed);
+    pool=weightedDraft(bv,needed);
     included=pool.includes(mcId);
   }
   let participants;
@@ -2306,50 +2352,86 @@ function runWeeklyEdition(b,format,mcId,forceInclude){
   const bracket=buildBracket(shuffle(participants));
   const duplaTipo=format==='dupla'?(Math.random()<0.5?'tipo1':'tipo2'):undefined;
   const formatLabel=format==='solo'?`Solo - ${size} MCs`:(format==='dupla'?'Duplas':format==='trio'?'Trios':'Quartetos')+` - ${size} equipes`;
-  const edition={id:uid(),name:`Edição ${b.editions.length+1}`,format,formatLabel,size,teamSize,targetWins,duplaTipo,bracket,status:'drawn',pointsApplied:false,excludeFromRanking:false};
-  b.editions.push(edition);
+  const edition={id:uid(),name:`Edição ${bv.editions.length+1}`,format,formatLabel,size,teamSize,targetWins,duplaTipo,bracket,status:'drawn',pointsApplied:false,excludeFromRanking:false};
+  bv.editions.push(edition);
   return {edition,included};
 }
 function tentarSorteioCareer(careerId,battleId){
-  const car=careerById(careerId), b=battleById(battleId); const st=car.weekBattleStatus[battleId];
+  const car=careerById(careerId); const bv=careerBattleView(car,battleId); const st=car.weekBattleStatus[battleId];
+  if(!bv||!st||st.resolved) return;
   recomputeCareerLevel(car);
-  car.energyUsed=Math.min(100,car.energyUsed+careerBattleEnergyCost(b,car));
+  car.energyUsed=Math.min(100,(car.energyUsed||0)+careerBattleEnergyCost(bv.estado,car));
   recomputeCareerLevel(car);
-  const r=runWeeklyEdition(b,st.format,car.mcId,false);
+  const r=runWeeklyEdition(bv,st.format,car.mcId,false);
   if(!r){ st.resolved=true; save(); render(); return; }
   st.editionId=r.edition.id;
-  if(r.included){ st.resolved=false; save(); nav('edition/'+battleId+'/'+r.edition.id); }
-  else { simulateAll(r.edition.bracket,r.edition.targetWins,r.edition.duplaTipo); applyRankingIfNeeded(b,r.edition); st.resolved=true; save(); render(); }
+  if(r.included){ st.resolved=false; save(); nav('career/edition/'+car.id+'/'+battleId+'/'+r.edition.id); }
+  else { simulateAll(r.edition.bracket,r.edition.targetWins,r.edition.duplaTipo); applyRankingIfNeeded(bv,r.edition); st.resolved=true; save(); render(); }
 }
 function irParaBatalhaCareer(careerId,battleId){
-  const car=careerById(careerId), b=battleById(battleId); const st=car.weekBattleStatus[battleId];
+  const car=careerById(careerId); const bv=careerBattleView(car,battleId); const st=car.weekBattleStatus[battleId];
+  if(!bv||!st||st.resolved) return;
   recomputeCareerLevel(car);
-  car.energyUsed=Math.min(100,car.energyUsed+careerBattleEnergyCost(b,car));
+  car.energyUsed=Math.min(100,(car.energyUsed||0)+careerBattleEnergyCost(bv.estado,car));
   recomputeCareerLevel(car);
-  const r=runWeeklyEdition(b,st.format,car.mcId,true);
+  const r=runWeeklyEdition(bv,st.format,car.mcId,true);
   if(!r){ st.resolved=true; save(); render(); return; }
   st.editionId=r.edition.id; st.resolved=false;
-  save(); nav('edition/'+battleId+'/'+r.edition.id);
+  save(); nav('career/edition/'+car.id+'/'+battleId+'/'+r.edition.id);
 }
-function avancarSemanaCareer(careerId){
-  const car=careerById(careerId); if(!car) return;
-  ensureWeekSetup(car);
-  db.battles.forEach(b=>{
-    const st=car.weekBattleStatus[b.id]; if(!st) return;
-    if(!st.editionId){ const r=runWeeklyEdition(b,st.format,car.mcId,false); if(r){ st.editionId=r.edition.id; simulateAll(r.edition.bracket,r.edition.targetWins,r.edition.duplaTipo); applyRankingIfNeeded(b,r.edition); } st.resolved=true; }
-    else { const ed=b.editions.find(e=>e.id===st.editionId); if(ed && !isBracketComplete(ed.bracket)){ simulateAll(ed.bracket,ed.targetWins,ed.duplaTipo); applyRankingIfNeeded(b,ed); } st.resolved=true; }
-  });
-  const weeklyTop=Object.entries(ligaWeeklyRanking()).sort((a,b)=>b[1]-a[1])[0];
-  if(weeklyTop && weeklyTop[0]===car.mcId){ car.ligaBoost={value:2,weeksLeft:1}; }
-  else if(car.ligaBoost && car.ligaBoost.weeksLeft>0) car.ligaBoost.weeksLeft--;
-  car.energyUsed=0;
-  car.semana++;
-  if(car.semana>13){ car.semana=1; car.temporada++; car.nationalSeason={regionalTries:0,wentRegional:false,wentEstadual:false,lockedOut:false,invitedTop80:false,responded80:false}; }
-  car.weekBattleStatus={}; car.pendingInvites=[]; car._weekReady=false;
-  recomputeCareerLevel(car);
-  save(); render();
+
+/* ---- Nacional isolado da carreira (Regional/Estadual do próprio estado + Nacional isolado com estados-base) ---- */
+function careerEligibleEstados(car,excludeOwn){
+  const own=mcById(car.mcId).estado;
+  const set=[...new Set(db.mcs.map(m=>m.estado))].filter(e=>excludeOwn?e!==own:true);
+  return set;
 }
+function careerSetupNational(car){
+  if(car.nat) return;
+  const m=mcById(car.mcId);
+  const count=db.mcs.filter(mm=>mm.estado===m.estado).length;
+  const size=computeStateSize(count);
+  car.nat={size,estado:m.estado,regionals:null,regionalIdx:0,regionalDone:false,estadualBracket:null,estadualDone:false,nacionalBracket:null,nacionalDone:false,invited80:false,responded80:false,soughtRegional:false,eliminatedRegional:false,estadualChampionMcId:null,skipped:false};
+}
+function careerNumRegionals(car){ const s=car.nat.size; return (s&&s>=32)?s/16:0; }
+function careerRegionalWeekRange(car){ const n=careerNumRegionals(car); return n? [8,7+n] : null; }
+function careerBuildRegionals(car){
+  const nat=car.nat, m=mcById(car.mcId);
+  const pool=db.mcs.filter(mm=>mm.estado===nat.estado).map(mm=>mm.id);
+  const chosen=shuffle(pool).slice(0,nat.size);
+  if(!chosen.includes(m.mcId===undefined?car.mcId:car.mcId) && Math.random()<1){ /* garantir inclusão se elegível será tratada no ato de tentar/aceitar */ }
+  const n=careerNumRegionals(car);
+  const groups=chunk(shuffle(chosen),16);
+  nat.regionals=groups.slice(0,n).map((g,i)=>({idx:i+1,bracket:buildBracket(shuffle(g).map(mcParticipant)),done:false,included:g.includes(car.mcId)}));
+}
+function careerForceIntoRegional(car,idx){
+  const nat=car.nat; const reg=nat.regionals[idx];
+  if(reg.included||reg.done) return;
+  const ids=Object.keys(reg.bracket.participants);
+  const victim=ids[Math.floor(Math.random()*ids.length)];
+  reg.bracket.participants[car.mcId]=mcParticipant(car.mcId);
+  delete reg.bracket.participants[victim];
+  reg.bracket.rounds.forEach(round=>round.forEach(mm=>{ if(mm.a===victim) mm.a=car.mcId; if(mm.b===victim) mm.b=car.mcId; }));
+  reg.included=true;
+}
+function careerBuildEstadual(car,ids){
+  car.nat.estadualBracket=buildBracket(shuffle(ids).map(mcParticipant));
+}
+function careerBuildNacional(car){
+  const nat=car.nat;
+  const others=careerEligibleEstados(car,true).slice(0,6);
+  const stand=[];
+  others.forEach(e=>{ const mcs=db.mcs.filter(mm=>mm.estado===e); if(mcs.length){ mcs.sort((a,b)=>b.nivel-a.nivel); stand.push(mcs[0].id); } });
+  let ids=[nat.estadualChampionMcId,...stand].filter(Boolean);
+  if(ids.length<4){ nat.nacionalDone=true; nat.nacionalSkippedNoOpponents=true; return; }
+  const target=nextValidNacional(ids.length);
+  ids=shuffle(ids).slice(0,target);
+  if(!ids.includes(nat.estadualChampionMcId)) ids[0]=nat.estadualChampionMcId;
+  nat.nacionalBracket=buildBracket(ids.map(mcParticipant));
+}
+
 function viewCareerHome(){
+  window.__inCareer=null;
   const rows=db.careers.map(c=>{ const m=mcById(c.mcId); if(!m) return ''; return `<div class="navcard" onclick="nav('career/dash/${c.id}')"><div><h3>${esc(m.name)}</h3><div class="muted">Temporada ${c.temporada} · Semana ${c.semana}</div></div><div class="chev">›</div></div>`; }).join('');
   return `${topbar('Modo Carreira','Suas carreiras de MC','home')}
   <div class="content">
@@ -2375,22 +2457,26 @@ function createCareer(){
   if(db.careers.length>=3) return alert('Máximo de 3 carreiras.');
   const mc={id:uid(),name,estado,nivel:65,foto,amigos:[],rivais:[]};
   db.mcs.push(mc);
-  const car={id:uid(),mcId:mc.id,temporada:1,semana:1,energyUsed:0,ligaBoost:{value:0,weeksLeft:0},weekBattleStatus:{},pendingInvites:[],nationalSeason:{regionalTries:0,wentRegional:false,wentEstadual:false,lockedOut:false,invitedTop80:false,responded80:false}};
+  const car={id:uid(),mcId:mc.id,temporada:1,semana:1,energyUsed:0,ligaBoost:{value:0,weeksLeft:0},weekBattleStatus:{},pendingInvites:[],battleData:{},nat:null,_weekReady:false};
   db.careers.push(car);
   save(); nav('career/dash/'+car.id);
+}
+function careerTopbar(car,title,sub,backHash){
+  window.__inCareer={careerId:car.id,mcId:car.mcId};
+  return topbar(title,sub,backHash);
 }
 function viewCareerDashboard(careerId){
   const car=careerById(careerId); if(!car) return viewCareerHome();
   ensureWeekSetup(car); save();
   const m=mcById(car.mcId); if(!m) return viewCareerHome();
   recomputeCareerLevel(car);
-  const titles=collectTitles(car.mcId);
-  const matches=collectMatchesForMc(car.mcId);
+  const titles=careerCollectTitles(car);
+  const matches=careerCollectMatches(car);
   const wins=matches.filter(x=>x.won).length;
+  const head=careerTopbar(car,esc(m.name),'Temporada '+car.temporada+' · Semana '+car.semana+'/13','career');
   if(car.pendingInvites.length){
-    const inv=car.pendingInvites[0];
-    const b=battleById(inv.battleId);
-    return `${topbar('Convite!','',null)}<div class="content"><div class="card">
+    const inv=car.pendingInvites[0]; const b=battleById(inv.battleId);
+    return `${head}<div class="content"><div class="card">
       <h3>${inv.type==='battle'?'Convite da batalha':'Convite de outro MC'} — ${esc(b?b.name:'')}</h3>
       <p class="muted">${inv.type==='battle'?'Você foi convidado para participar da edição desta semana.':'Um MC quer chamar você para uma '+inv.format+' nesta batalha.'}</p>
       <div class="actionsrow">
@@ -2399,41 +2485,193 @@ function viewCareerDashboard(careerId){
       </div>
     </div></div>`;
   }
+  const natInvite=careerCheckNationalInvite(car);
   const battleRows=db.battles.map(b=>{
     const st=car.weekBattleStatus[b.id];
     return `<div class="navcard" onclick="nav('career/battle/${car.id}/${b.id}')"><div><h3>${esc(b.name)}</h3><div class="muted">${st.format} · ${st.confirmed?'Confirmado':(st.resolved?'Já decidido':'Pode tentar sorteio')}</div></div><div class="chev">›</div></div>`;
   }).join('');
-  return `${topbar(esc(m.name),'Temporada '+car.temporada+' · Semana '+car.semana+'/13','career')}
+  return `${head}
   <div class="content">
     <div class="card">
       <div class="statgrid">
         <div class="statbox"><b>${m.nivel}</b><span>Nível</span></div>
-        <div class="statbox"><b>${100-car.energyUsed}</b><span>Energia</span></div>
+        <div class="statbox"><b>${100-(car.energyUsed||0)}</b><span>Energia</span></div>
         <div class="statbox"><b>${titles.length}</b><span>Títulos</span></div>
         <div class="statbox"><b>${matches.length}</b><span>Batalhas</span></div>
         <div class="statbox"><b>${wins}</b><span>Vitórias</span></div>
       </div>
-      <button class="btn secondary small" onclick="openMcModal('${m.id}')">Ver card do MC</button>
+      <button class="btn secondary small" onclick="nav('career/mc/${car.id}')">Ver card do MC</button>
       <button class="btn gold" onclick="avancarSemanaCareer('${car.id}')">Avançar Semana</button>
     </div>
-    <div class="card"><h3>Nacional</h3><button class="btn secondary small" onclick="nav('nacional/estado/${encodeURIComponent(m.estado)}')">Ver estrutura de ${esc(m.estado)}</button></div>
+    ${natInvite}
+    <div class="card"><h3>Nacional (${esc(m.estado)})</h3><button class="btn secondary small" onclick="nav('career/nacional/${car.id}')">Ver</button></div>
     <div class="list-grid">${battleRows||'<p class="muted">Nenhuma batalha cadastrada no site ainda.</p>'}</div>
   </div>`;
 }
+function careerCheckNationalInvite(car){
+  careerSetupNational(car);
+  const nat=car.nat; if(!nat.size) return '';
+  if(car.semana<8) return '';
+  if(nat.invited80===false && !nat.responded80 && mcById(car.mcId).nivel>=80){
+    nat.invited80=true; save();
+    return `<div class="card"><h3>Convite Nacional</h3><p class="muted">Seu nível é 80+. Você pode entrar direto na fase inicial (Regional/Estadual) sem sorteio.</p>
+    <div class="actionsrow"><button class="btn" onclick="careerAcceptNationalInvite('${car.id}')">Aceitar</button><button class="btn secondary" onclick="careerDeclineNationalInvite('${car.id}')">Recusar</button></div></div>`;
+  }
+  return '';
+}
+function careerAcceptNationalInvite(careerId){
+  const car=careerById(careerId); careerSetupNational(car); car.nat.responded80=true;
+  const nat=car.nat;
+  if(careerNumRegionals(car)>0){ if(!nat.regionals) careerBuildRegionals(car); careerForceIntoRegional(car,0); }
+  else { const pool=db.mcs.filter(mm=>mm.estado===nat.estado).map(mm=>mm.id); let ids=shuffle(pool.filter(id=>id!==car.mcId)).slice(0,nat.size-1); ids.push(car.mcId); careerBuildEstadual(car,ids); }
+  save(); render();
+}
+function careerDeclineNationalInvite(careerId){ const car=careerById(careerId); careerSetupNational(car); car.nat.responded80=true; save(); render(); }
+function viewCareerNacional(careerId){
+  const car=careerById(careerId); if(!car) return viewCareerHome();
+  careerSetupNational(car); const nat=car.nat; const m=mcById(car.mcId);
+  const head=careerTopbar(car,'Nacional','Estado: '+esc(m.estado),'career/dash/'+car.id);
+  if(!nat.size) return `${head}<div class="content"><p class="muted">Seu estado não tem MCs suficientes (mínimo 8) para estrutura Nacional.</p></div>`;
+  let body='';
+  const numReg=careerNumRegionals(car);
+  const regRange=careerRegionalWeekRange(car);
+  if(numReg>0){
+    if(!nat.regionals && car.semana>=8 && car.semana<=(regRange?regRange[1]:11) && !nat.responded80){
+      const canTry=!nat.eliminatedRegional;
+      body+=`<div class="card"><p class="muted">Fase Regional disponível (semana ${regRange[0]}-${regRange[1]}).</p>${canTry?`<button class="btn" onclick="careerTentarNacional('${car.id}')">Tentar Sorteio</button>`:'<p class="muted">Você não conseguiu vaga nesta temporada.</p>'}</div>`;
+    }
+    if(nat.regionals){
+      body+=`<div class="list-grid">${nat.regionals.map(r=>`<div class="navcard" onclick="nav('career/regional/${car.id}/${r.idx}')"><div><h3>Regional ${r.idx}</h3><div class="muted">${isBracketComplete(r.bracket)?'Concluído':'Em andamento'}${r.included?' · Você está':''}</div></div><div class="chev">›</div></div>`).join('')}</div>`;
+    }
+  }
+  if(nat.estadualBracket){
+    body+=`<div class="card"><h3>Estadual</h3>${renderBracketBlock(nat.estadualBracket,2,'simCareerEstadual',[car.id])}</div>`;
+    if(isBracketComplete(nat.estadualBracket) && !nat.estadualDone){ nat.estadualDone=true; nat.estadualChampionMcId=bracketChampion(nat.estadualBracket); save(); }
+  } else if(car.semana===12 && numReg===0 && !nat.responded80){
+    const pool=db.mcs.filter(mm=>mm.estado===nat.estado).map(mm=>mm.id);
+    body+=`<div class="card"><button class="btn" onclick="careerTentarEstadualDireto('${car.id}')">Tentar Sorteio (Estadual)</button></div>`;
+  } else if(car.semana===12 && nat.regionals && nat.regionals.every(r=>isBracketComplete(r.bracket)) && !nat.estadualBracket){
+    body+=`<div class="card"><button class="btn" onclick="careerMontarEstadual('${car.id}')">Formar Estadual</button></div>`;
+  }
+  if(nat.nacionalBracket){
+    body+=`<div class="card"><h3>Nacional</h3>${renderBracketBlock(nat.nacionalBracket,2,'simCareerNacional',[car.id])}</div>`;
+    if(isBracketComplete(nat.nacionalBracket)) nat.nacionalDone=true;
+  } else if(car.semana>=13 && nat.estadualDone && !nat.nacionalBracket){
+    body+=`<div class="card"><button class="btn gold" onclick="careerMontarNacional('${car.id}')">Iniciar Nacional</button></div>`;
+  }
+  return `${head}<div class="content">${body||'<p class="muted">Aguarde a semana correta do calendário.</p>'}</div>`;
+}
+function careerTentarNacional(careerId){
+  const car=careerById(careerId); careerSetupNational(car); const nat=car.nat;
+  car.energyUsed=Math.min(100,(car.energyUsed||0)+careerBattleEnergyCost(nat.estado,car)); recomputeCareerLevel(car);
+  if(!nat.regionals) careerBuildRegionals(car);
+  const idx=nat.regionals.findIndex(r=>!r.included && !isBracketComplete(r.bracket));
+  if(idx===-1){ nat.eliminatedRegional=true; save(); render(); return; }
+  const chance=nat.size/64;
+  if(Math.random()<Math.max(0.15,Math.min(0.5,chance))) nat.regionals[idx].included=nat.regionals[idx].bracket.participants[car.mcId]?true:careerForceIntoRegional(car,idx)||true;
+  else nat.eliminatedRegional=false;
+  nat.soughtRegional=true;
+  save(); render();
+}
+function careerTentarEstadualDireto(careerId){
+  const car=careerById(careerId); const nat=car.nat;
+  car.energyUsed=Math.min(100,(car.energyUsed||0)+careerBattleEnergyCost(nat.estado,car)); recomputeCareerLevel(car);
+  const pool=db.mcs.filter(mm=>mm.estado===nat.estado).map(mm=>mm.id);
+  const chosen=shuffle(pool).slice(0,nat.size);
+  const chance=nat.size/pool.length;
+  let ids=chosen;
+  if(chosen.includes(car.mcId) || Math.random()<chance){ if(!ids.includes(car.mcId)){ ids=ids.slice(0,nat.size-1); ids.push(car.mcId); } careerBuildEstadual(car,ids); }
+  nat.responded80=true;
+  save(); render();
+}
+function careerMontarEstadual(careerId){
+  const car=careerById(careerId); const nat=car.nat;
+  let ids=[];
+  nat.regionals.forEach(r=>{ const semi=r.bracket.rounds[r.bracket.rounds.length-2]||r.bracket.rounds[r.bracket.rounds.length-1]; semi.forEach(mm=>{ if(mm.a) ids.push(mm.a); if(mm.b) ids.push(mm.b); }); });
+  ids=[...new Set(ids)];
+  careerBuildEstadual(car,ids);
+  save(); render();
+}
+function careerMontarNacional(careerId){ const car=careerById(careerId); careerBuildNacional(car); save(); render(); }
+function viewCareerRegional(careerId,idx){
+  const car=careerById(careerId); const nat=car.nat; const reg=nat.regionals.find(r=>r.idx===idx);
+  const head=careerTopbar(car,'Regional '+idx,'','career/nacional/'+car.id);
+  return `${head}<div class="content"><div class="card">${renderBracketBlock(reg.bracket,2,'simCareerRegional',[car.id,idx])}</div></div>`;
+}
+function simCareerRegional(careerId,idx,mode){
+  const car=careerById(careerId); const reg=car.nat.regionals.find(r=>r.idx===idx);
+  if(mode==='oneround') simulateSingleRound(reg.bracket,2);
+  if(mode==='one') simulateOne(reg.bracket,2);
+  if(mode==='phase') simulatePhase(reg.bracket,2);
+  if(mode==='all') simulateAll(reg.bracket,2);
+  save(); render();
+}
+function simCareerEstadual(careerId,mode){
+  const car=careerById(careerId); const b=car.nat.estadualBracket;
+  if(mode==='oneround') simulateSingleRound(b,2);
+  if(mode==='one') simulateOne(b,2);
+  if(mode==='phase') simulatePhase(b,2);
+  if(mode==='all') simulateAll(b,2);
+  save(); render();
+}
+function simCareerNacional(careerId,mode){
+  const car=careerById(careerId); const b=car.nat.nacionalBracket;
+  if(mode==='oneround') simulateSingleRound(b,2);
+  if(mode==='one') simulateOne(b,2);
+  if(mode==='phase') simulatePhase(b,2);
+  if(mode==='all') simulateAll(b,2);
+  save(); render();
+}
+function viewCareerMc(careerId){
+  const car=careerById(careerId); const m=mcById(car.mcId); if(!m) return viewCareerHome();
+  const head=careerTopbar(car,esc(m.name),esc(m.estado)+' · Nível '+m.nivel,'career/dash/'+car.id);
+  const titles=careerCollectTitles(car);
+  const matches=careerCollectMatches(car);
+  const wins=matches.filter(x=>x.won).length, losses=matches.length-wins;
+  const winrate=matches.length?Math.round(wins/matches.length*100):0;
+  const battleTabs=Object.keys(car.battleData).map(bid=>battleById(bid)).filter(Boolean);
+  const perBattle=battleTabs.map(rb=>{
+    const bd=car.battleData[rb.id];
+    const bm=[]; bd.editions.forEach(ed=>careerScanMatches(ed.bracket,car.mcId,bm));
+    const bw=bm.filter(x=>x.won).length;
+    const bt=bd.editions.filter(ed=>isBracketComplete(ed.bracket)&&editionChampionIds(ed).includes(car.mcId)).length;
+    return `<div class="card"><h3>${esc(rb.name)}</h3><div class="statgrid">
+      <div class="statbox"><b>${bm.length}</b><span>Batalhas</span></div>
+      <div class="statbox"><b>${bw}</b><span>Vitórias</span></div>
+      <div class="statbox"><b>${bm.length-bw}</b><span>Derrotas</span></div>
+      <div class="statbox"><b>${bt}</b><span>Títulos</span></div>
+    </div></div>`;
+  }).join('');
+  return `${head}<div class="content">
+    <div class="card">${m.foto?`<img src="${esc(m.foto)}" class="mcAvatar" style="margin-bottom:10px;">`:''}
+    <div class="statgrid">
+      <div class="statbox"><b>${matches.length}</b><span>Batalhas</span></div>
+      <div class="statbox"><b>${wins}</b><span>Vitórias</span></div>
+      <div class="statbox"><b>${losses}</b><span>Derrotas</span></div>
+      <div class="statbox"><b>${winrate}%</b><span>Aproveitamento</span></div>
+      <div class="statbox"><b>${titles.length}</b><span>Títulos</span></div>
+    </div></div>
+    <div class="card"><h3>Títulos (${titles.length})</h3>${titles.length?titles.map(t=>titleRowHtml(t)).join(''):'<p class="muted">Nenhum título ainda.</p>'}</div>
+    ${perBattle}
+  </div>`;
+}
 function viewCareerBattle(careerId,battleId){
-  const car=careerById(careerId), b=battleById(battleId); if(!car||!b) return viewCareerHome();
-  const st=car.weekBattleStatus[battleId];
-  const ranking=Object.entries(b.ranking).sort((x,y)=>y[1]-x[1]).slice(0,10);
+  const car=careerById(careerId); const bv=careerBattleView(car,battleId); if(!car||!bv) return viewCareerHome();
+  const st=car.weekBattleStatus[battleId]; if(!st){ ensureWeekSetup(car); save(); }
+  const st2=car.weekBattleStatus[battleId];
+  applyBattleTheme(bv.color,bv.color2,bv.color3);
+  const head=careerTopbar(car,bv.name,'Formato desta semana: '+st2.format,'career/dash/'+car.id);
+  const ranking=Object.entries(bv.ranking).sort((x,y)=>y[1]-x[1]).slice(0,10);
   const rankRows=ranking.map((r,i)=>`<div class="rankrow"><div><span class="pos">${i+1}º</span> ${mcLinkAv(r[0])}</div><b>${r[1]} pts</b></div>`).join('');
-  const last5=b.editions.slice(-5).reverse();
-  const edRows=last5.map(ed=>`<div class="navcard" onclick="nav('edition/${b.id}/${ed.id}')"><div><h3>${esc(ed.name)}</h3><div class="muted">${esc(ed.formatLabel)}</div></div><div class="chev">›</div></div>`).join('');
-  const champs=ultimosCampeoes(b,5);
+  const last5=bv.editions.slice(-5).reverse();
+  const edRows=last5.map(ed=>`<div class="navcard" onclick="nav('career/edition/${car.id}/${bv.id}/${ed.id}')"><div><h3>${esc(ed.name)}</h3><div class="muted">${esc(ed.formatLabel)}</div></div><div class="chev">›</div></div>`).join('');
+  const champs=ultimosCampeoes(bv,5);
   const champHtml=champs.map(c=>`<div class="champrow"><span class="badge">${esc(c.edition)}</span> ${c.label.kind==='mc'?mcLinkAv(c.label.ids[0],c.label.name):c.label.ids.map(mid=>mcLinkAv(mid)).join(' & ')}</div>`).join('');
   let actionBtn='';
-  if(st.resolved){ actionBtn=`<p class="muted">Esta batalha já foi decidida nesta semana.</p>`; }
-  else if(st.confirmed){ actionBtn=`<button class="btn" onclick="irParaBatalhaCareer('${car.id}','${b.id}')">Ir para a Batalha</button>`; }
-  else { actionBtn=`<button class="btn secondary" onclick="tentarSorteioCareer('${car.id}','${b.id}')">Tentar Sorteio</button>`; }
-  return `${topbar(b.name,'Formato desta semana: '+st.format,'career/dash/'+car.id)}
+  if(st2.resolved){ actionBtn=`<p class="muted">Esta batalha já foi decidida nesta semana.</p>`; }
+  else if(st2.confirmed){ actionBtn=`<button class="btn" onclick="irParaBatalhaCareer('${car.id}','${bv.id}')">Ir para a Batalha</button>`; }
+  else { actionBtn=`<button class="btn secondary" onclick="tentarSorteioCareer('${car.id}','${bv.id}')">Tentar Sorteio</button>`; }
+  return `${head}
   <div class="content">
     <div class="card">${actionBtn}</div>
     <div class="card"><h3>Ranking</h3>${rankRows||'<p class="muted">Sem ranking ainda.</p>'}</div>
@@ -2441,6 +2679,46 @@ function viewCareerBattle(careerId,battleId){
     <div class="card"><h3>Últimos Campeões</h3>${champHtml||'<p class="muted">Nenhum.</p>'}</div>
   </div>`;
 }
-
+function viewCareerEdition(careerId,battleId,edId){
+  const car=careerById(careerId); const bv=careerBattleView(car,battleId); if(!bv) return viewCareerHome();
+  const ed=bv.editions.find(e=>e.id===edId); if(!ed) return viewCareerBattle(careerId,battleId);
+  applyBattleTheme(bv.color,bv.color2,bv.color3);
+  applyRankingIfNeeded(bv,ed);
+  const head=careerTopbar(car,ed.name,ed.formatLabel,'career/battle/'+car.id+'/'+battleId);
+  const html=renderBracketBlock(ed.bracket,ed.targetWins,'simCareerEdition',[`'${car.id}'`,`'${battleId}'`,`'${edId}'`]);
+  return `${head}<div class="content"><div class="card">${html}</div></div>`;
+}
+function simCareerEdition(careerId,battleId,edId,mode){
+  const car=careerById(careerId); const bv=careerBattleView(car,battleId); const ed=bv.editions.find(e=>e.id===edId);
+  if(mode==='oneround') simulateSingleRound(ed.bracket,ed.targetWins,ed.duplaTipo);
+  if(mode==='one') simulateOne(ed.bracket,ed.targetWins,ed.duplaTipo);
+  if(mode==='phase') simulatePhase(ed.bracket,ed.targetWins,ed.duplaTipo);
+  if(mode==='all') simulateAll(ed.bracket,ed.targetWins,ed.duplaTipo);
+  applyRankingIfNeeded(bv,ed);
+  save(); render();
+}
+function avancarSemanaCareer(careerId){
+  const car=careerById(careerId); if(!car) return;
+  ensureWeekSetup(car);
+  db.battles.forEach(b=>{
+    const st=car.weekBattleStatus[b.id]; if(!st) return;
+    const bv=careerBattleView(car,b.id);
+    if(!st.editionId){ const r=runWeeklyEdition(bv,st.format,car.mcId,false); if(r){ st.editionId=r.edition.id; simulateAll(r.edition.bracket,r.edition.targetWins,r.edition.duplaTipo); applyRankingIfNeeded(bv,r.edition); } st.resolved=true; }
+    else { const ed=bv.editions.find(e=>e.id===st.editionId); if(ed && !isBracketComplete(ed.bracket)){ simulateAll(ed.bracket,ed.targetWins,ed.duplaTipo); applyRankingIfNeeded(bv,ed); } st.resolved=true; }
+  });
+  try{
+    const weeklyTop=Object.entries(ligaWeeklyRanking()).sort((a,b)=>b[1]-a[1])[0];
+    if(weeklyTop && weeklyTop[0]===car.mcId) car.ligaBoost={value:2,weeksLeft:1};
+    else if(car.ligaBoost && car.ligaBoost.weeksLeft>0) car.ligaBoost.weeksLeft--;
+  }catch(e){}
+  car.energyUsed=0;
+  car.semana=(car.semana||1)+1;
+  if(car.semana>13){
+    car.semana=1; car.temporada=(car.temporada||1)+1; car.nat=null;
+  }
+  car.weekBattleStatus={}; car.pendingInvites=[]; car._weekReady=false;
+  recomputeCareerLevel(car);
+  save(); render();
+}
 /* ================= INIT ================= */
 render();
